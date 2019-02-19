@@ -33,6 +33,23 @@ namespace
 			return string(fptr->getName());
 		}
 	}
+
+	void PrintFunctionArgs(CallInst *call)
+	{
+		auto *fptr = call->getCalledFunction();
+		if (!fptr) {
+			errs() << "received null as fptr\n";
+		}
+		else {
+			for (auto arg = fptr->arg_begin(); arg != fptr->arg_end(); arg++)
+			{
+				//Value* val = arg;
+				//errs() << val->getName().str() << " -> " << "\n";
+				errs() << arg->getType() << " -> " << "\n";
+			}
+			
+		}
+	}
 	
 
 class shmemheat : public FunctionPass
@@ -63,6 +80,7 @@ public:
 				CallInst *ci = cast<CallInst>(ii);
 				//errs() << "\t\t "<< cast<CallInst>(ii).getCalledFunction().getName()<< "\n";			
 				errs() << "\t\t"<<ParseFunctionName(ci) << "\n";
+				PrintFunctionArgs(ci);
 				errs() << bbs->getOpcodeName() << '\t';
 				bbs->printAsOperand(errs(), false);
 				errs() << '\n';
