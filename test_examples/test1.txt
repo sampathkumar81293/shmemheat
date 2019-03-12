@@ -1,0 +1,6 @@
+main 	 function size 1shmem_init  %4 = call i32 (...) @shmem_init()Function call: shmem_n_pes
+Function call: shmem_my_pe
+Function call: shmem_finalize
+
+	 Call instructions:	0
+
