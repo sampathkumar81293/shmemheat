@@ -1,19 +1,19 @@
 main Function Name: 	main
-		 Function size 1shmem_init  %7 = call i32 (...) @shmem_init()Function call: shmem_my_pe
+		 Function size 5shmem_init  %8 = call i32 (...) @shmem_init()Function call: shmem_my_pe
 Function call: shmem_n_pes
 Function call: shmem_malloc
 Function call: shmem_barrier_all
 Function call: shmem_long_get
   %3 = alloca i64, align 8
 
-  %21 = load i64*, i64** %2, align 8
+  %26 = load i64*, i64** %2, align 8
 
 i32 1
-  %22 = load i32, i32* %4, align 4
+  %27 = load i32, i32* %4, align 4
 i32
 Not a const
 
-Printing the actual PE argument:   %22 = load i32, i32* %4, align 4
+Printing the actual PE argument:   %27 = load i32, i32* %4, align 4
 ************************************************************************ 
 
 Function call: shmem_finalize
@@ -23,17 +23,17 @@ Function call: shmem_finalize
 
 Running the Block Frequency Estimation Part 
 Function call: shmem_long_get
-prof count: 0	 freq count: 8Printing function name: shmem_long_get occurs 0 times.
+prof count: 0	 freq count: 248Printing function name: shmem_long_get occurs 248 times.
   %3 = alloca i64, align 8
 
-  %21 = load i64*, i64** %2, align 8
+  %26 = load i64*, i64** %2, align 8
 
 i32 1
-  %22 = load i32, i32* %4, align 4
+  %27 = load i32, i32* %4, align 4
 i32
 Not a const
 
-Printing the actual PE argument:   %22 = load i32, i32* %4, align 4
+Printing the actual PE argument:   %27 = load i32, i32* %4, align 4
 
 
 ************************************************************************ 

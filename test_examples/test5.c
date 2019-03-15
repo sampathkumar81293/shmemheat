@@ -22,10 +22,10 @@ int main(void)
 
     shmem_barrier_all();
 
-    for(i =0 ;i< 10;i++)
-	{
-		shmem_long_get(&dest, src, 1, nextpe);
-	}
+   
+
+    shmem_long_get(&dest, src, 1, nextpe);
+shmem_long_get(&dest, src, 1, nextpe);
 
     printf("%d : %ld\n", me, dest);
 
