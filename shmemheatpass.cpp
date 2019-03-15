@@ -235,10 +235,11 @@ namespace
 		{
 			errs().write_escaped(Func.getName());
 			errs() << " Function Name: \t" << Func.getName() << "\n\t\t Function size " << Func.size();
-			for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
+		/*	for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
 			{
 				runOnBasicBlock(*Its);
 			}
+			*/
 			//printResult();
 			functionMap.clear();
 
