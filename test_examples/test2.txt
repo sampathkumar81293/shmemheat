@@ -1,105 +1,34 @@
 main Function Name: 	main
-		 Function size 13shmem_init  %19 = call i32 (...) @shmem_init()Function call: shmem_n_pes
-Function call: shmem_my_pe
-Function call: shmem_malloc
-Function call: shmem_int_get
-  %40 = load i32*, i32** %5, align 8
-
-  %43 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %42
-
-i32 1
-i32 1
-i32
-const integer type
-Const value: 1
-
-Printing the actual PE argument: i32 1
-************************************************************************ 
-
-Function call: shmem_int_put
-  %47 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %46
-
-  %52 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %51
-
-i32 1
-i32 1
-i32
-const integer type
-Const value: 1
-
-Printing the actual PE argument: i32 1
-************************************************************************ 
-
-Function call: shmem_int_put
-  %58 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %57
-
-  %59 = load i32*, i32** %5, align 8
-
-i32 1
-i32 1
-i32
-const integer type
-Const value: 1
-
-Printing the actual PE argument: i32 1
-************************************************************************ 
-
-Function call: shmem_barrier_all
-Function call: shmem_finalize
-
+		 Function size 13
 
 ************************************************************************ 
 
 Running the Block Frequency Estimation Part 
-Function call: shmem_int_get
-Function call: shmem_int_put
-Function call: shmem_int_put
-prof count: 0	 freq count: 248Printing function name: shmem_int_get occurs 248 times.
-  %40 = load i32*, i32** %5, align 8
-
-  %43 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %42
-
-i32 1
-i32 1
-i32
+ This block  : 	 has	 22 Instructions.
+ Found 7 shmem related call instructions
+ Display Call statistics: 
+		Printing function name: shmem_int_get occurs 248 times.
+		
+		
 const integer type
 Const value: 1
+		Printing the actual PE argument: i32 1
+		************************************************************************ 
 
-Printing the actual PE argument: i32 1
-
-
-************************************************************************ 
-
-Printing function name: shmem_int_put occurs 248 times.
-  %47 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %46
-
-  %52 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %51
-
-i32 1
-i32 1
-i32
+		Printing function name: shmem_int_put occurs 248 times.
+		
+		
 const integer type
 Const value: 1
+		Printing the actual PE argument: i32 1
+		************************************************************************ 
 
-Printing the actual PE argument: i32 1
-
-
-************************************************************************ 
-
-Printing function name: shmem_int_put occurs 248 times.
-  %58 = getelementptr inbounds [12 x i32], [12 x i32]* @src, i64 0, i64 %57
-
-  %59 = load i32*, i32** %5, align 8
-
-i32 1
-i32 1
-i32
+		Printing function name: shmem_int_put occurs 248 times.
+		
+		
 const integer type
 Const value: 1
-
-Printing the actual PE argument: i32 1
-
-
-************************************************************************ 
+		Printing the actual PE argument: i32 1
+		************************************************************************ 
 
 

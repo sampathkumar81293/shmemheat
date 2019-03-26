@@ -158,7 +158,7 @@ namespace
 			CallInst *ci = cast<CallInst>(ii);
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
 
-			errs() << "Printing function name: " << cname << " occurs " << count << " times.\n";
+			errs() << "\t\tPrinting function name: " << cname << " occurs " << count << " times.\n";
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
 
 			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
@@ -166,10 +166,10 @@ namespace
 				for (auto i = 0; i < ci->getNumArgOperands(); i++)
 				{
 
-					ci->getArgOperand(i)->dump();
+					//ci->getArgOperand(i)->dump();
 					if (ci->getArgOperand(i)->getType()->isPointerTy())
 					{
-						errs() << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
+						errs() << "\t\t"<<ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
 					}
 					else
 					{
@@ -183,7 +183,7 @@ namespace
 				Value *v3 = ci->getArgOperand(3);
 				a3 = ci->getArgOperand(2)->getType();
 				a4 = ci->getArgOperand(3)->getType();
-				a4->dump();
+				//a4->dump();
 				if (a4->isIntegerTy())
 				{
 					// compare the values and see if it out of current PE
@@ -202,13 +202,23 @@ namespace
 					// Different types. It must me an integert according to the put and get definitions
 					//errs() << "Different types\n";
 				}
-				errs() << "\nPrinting the actual PE argument: ";
+				errs() << "\t\tPrinting the actual PE argument: ";
 				ci->getArgOperand(3)->dump();
-				errs() << "\n\n************************************************************************ \n\n";
+				errs() << "\t\t************************************************************************ \n\n";
 			}
 		}
 
-		virtual bool isBlockOfInterest(BasicBlock &B, vector <Instruction *> &vec)
+		virtual bool isCallOfInterest(string &cname)
+		{
+			return (cname.find("shmem") != std::string::npos  && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos);
+		}
+
+		virtual bool isShmemCall(string &cname)
+		{
+			return (cname.find("shmem") != std::string::npos);
+		}
+
+		virtual bool isBlockOfInterest(BasicBlock &B, vector <Instruction *> &vec, vector <Instruction *> &callinst)
 		{
 			bool interest = false;
 			for (auto &I : B)
@@ -221,7 +231,11 @@ namespace
 				if (Function *fptr = dyn_cast<Function>(called))
 				{
 					string cname = fptr->getName().str();
-					if (cname.find("shmem") != std::string::npos  && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+					if (isShmemCall(cname))
+					{
+						callinst.push_back(ii);
+					}
+					if (isCallOfInterest(cname)) {
 						CallInst *ci = cast<CallInst>(ii);
 						//errs() << "Function call: " << fptr->getName() << "\n";
 						interest = true;
@@ -248,7 +262,7 @@ namespace
 
 			errs() << "Running the Block Frequency Estimation Part \n";
 
-			vector <Instruction *> insv;
+			vector <Instruction *> insv, callinst;
 			bool loop = false;
 			BranchProbabilityInfo &BPI = getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
 			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
@@ -261,12 +275,15 @@ namespace
 				uint64_t BBprofCount = locBFI.getBlockProfileCount(&B).hasValue() ? locBFI.getBlockProfileCount(&B).getValue() : 0;
 				uint64_t BBfreqCount = locBFI.getBlockFreq(&B).getFrequency();
 				insv.clear();
-				if (isBlockOfInterest(B, insv))
+				if (isBlockOfInterest(B, insv, callinst))
 				{
 					//errs() << "prof count: " << BBprofCount << "\t freq count: " << BBfreqCount;
 					/*loop = LI.getLoopFor(&B);
 					if (loop == false)
 					{*/
+						errs() << " This block  : \t" << B.getName() << " has\t " << B.size() << " Instructions.\n";
+						errs() << " Found " << callinst.size() << " shmem related call instructions\n";
+						errs() << " Display Call statistics: \n";
 						for (auto ins : insv)
 						{
 							DisplayCallstatistics(ins, BBprofCount == 0? BBfreqCount : BBprofCount);
