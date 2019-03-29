@@ -26,6 +26,28 @@ using namespace std;
 
 namespace
 {
+	typedef  BasicBlock* bbt;
+	
+
+	 struct heatNode {
+		int ID;
+		bbt bb;
+		int profcount;
+		int freqcount;
+		int noofcallins;
+		bool imp;
+		heatNode(int id, bbt bb ) : ID(id), bb(bb) , profcount(0) , freqcount(0), noofcallins(0), imp(false){}
+		void setID(int ID) { this->ID = ID; }
+		int getID() { return ID; }
+		void setnoofcallins(int ID) { this->noofcallins = ID; }
+		int getnoofcallins() { return noofcallins; }
+		void setfreqcount(int fc) { this->freqcount = fc; }
+		int getfreqcount() { return freqcount; }
+		void setprofcount(int pc) { this->profcount = pc; }
+		int getprofcount() { return profcount; }
+	};
+
+	 
 
 	string ParseFunctionName(CallInst *call)
 	{
@@ -41,16 +63,11 @@ namespace
 	void PrintFunctionArgs(CallInst *ci)
 	{
 		// gets function name from the call instruction
-
 		string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
-
 		// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-
 		if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
-
 			for (auto i = 0; i < ci->getNumArgOperands(); i++)
 			{
-
 				ci->getArgOperand(i)->dump();
 				if (ci->getArgOperand(i)->getType()->isPointerTy())
 				{
@@ -96,24 +113,27 @@ namespace
 			errs() << "************************************************************************ \n\n";
 		}
 	}
-
-
 	class shmemheat : public  BlockFrequencyInfoWrapperPass
 	{
 	public:
 		map <string, int> functionMap;
+		map < bbt, heatNode *> heatmp;
+		map < int , heatNode *> heatIDmp;
 		static char ID;
+		int id = 1;
 		shmemheat() : BlockFrequencyInfoWrapperPass() {}
 		~shmemheat() {}
 
-
+		int getNoOfNodes()
+		{
+			return id - 1;
+		}
 		void getAnalysisUsage(AnalysisUsage &AU) const
 		{
 			AU.addRequired<BranchProbabilityInfoWrapperPass>();
 			AU.addRequired<LoopInfoWrapperPass>();
 			AU.setPreservesAll();
 		}
-
 
 		void printResult()
 		{
@@ -122,6 +142,19 @@ namespace
 			errs() << '\n';
 		}
 
+		void printheadnodeinfo()
+		{
+			int nodesize = getNoOfNodes();
+			heatNode *tmp = NULL;
+			for (int i = 1; i <= nodesize; i++)
+			{
+				tmp = heatIDmp[i];
+				errs() << "\nID: " << tmp->getID();
+				errs() << "\nfreqcount: " << tmp->getfreqcount();
+				errs() << "\nprofcount: " << tmp->getprofcount();
+				errs() << "\nNo of call instructions " << tmp->getnoofcallins() << "\n";
+			}
+		}
 		virtual bool runOnBasicBlock(BasicBlock &BB)
 		{
 			for (BasicBlock::iterator bbs = BB.begin(), bbe = BB.end(); bbs != bbe; ++bbs)
@@ -129,7 +162,6 @@ namespace
 				Instruction* ii = &(*bbs);
 				CallSite cs(ii);
 				if (!cs.getInstruction()) continue;
-
 				Value* called = cs.getCalledValue()->stripPointerCasts();
 				if (Function *fptr = dyn_cast<Function>(called))
 				{
@@ -147,25 +179,19 @@ namespace
 						PrintFunctionArgs(ci);
 					}
 				}
-
 			}
-
 		}
-
 		void DisplayCallstatistics(Instruction *ins, uint64_t &count)
 		{
 			Instruction* ii = ins;
 			CallInst *ci = cast<CallInst>(ii);
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
-
 			errs() << "\t\tPrinting function name: " << cname << " occurs " << count << " times.\n";
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-
-			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
-
+			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) 
+			{
 				for (auto i = 0; i < ci->getNumArgOperands(); i++)
 				{
-
 					//ci->getArgOperand(i)->dump();
 					if (ci->getArgOperand(i)->getType()->isPointerTy())
 					{
@@ -257,17 +283,22 @@ namespace
 			//printResult();
 			functionMap.clear();
 
-
 			errs() << "\n\n************************************************************************ \n\n";
-
 			errs() << "Running the Block Frequency Estimation Part \n";
 
 			vector <Instruction *> insv, callinst;
 			bool loop = false;
+
 			BranchProbabilityInfo &BPI = getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
 			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 			BlockFrequencyInfo &locBFI = getBFI();
 			locBFI.calculate(Func, BPI, LI);
+
+			dbgs() << "&&&&&&&&&&&&&&&&&&&&&&\n";
+			locBFI.print(llvm::dbgs());
+			dbgs() << "%%%%%%%%%%%%%%%%%%%%%\n";
+			BPI.print(llvm::dbgs());
+
 
 			// iterate through each block 
 			for (auto &B : Func)
@@ -277,13 +308,17 @@ namespace
 				insv.clear();
 				if (isBlockOfInterest(B, insv, callinst))
 				{
-					//errs() << "prof count: " << BBprofCount << "\t freq count: " << BBfreqCount;
+					heatNode *hnode = new heatNode(id, &B);
+					hnode->setfreqcount(BBfreqCount);
+					hnode->setprofcount(BBprofCount);
+					errs() << "**********************************\nprof count: " << BBprofCount << "\t freq count: " << BBfreqCount;
 					/*loop = LI.getLoopFor(&B);
 					if (loop == false)
 					{*/
 						errs() << " This block  : \t" << B.getName() << " has\t " << B.size() << " Instructions.\n";
 						errs() << " Found " << callinst.size() << " shmem related call instructions\n";
 						errs() << " Display Call statistics: \n";
+						hnode->setnoofcallins(callinst.size());
 						for (auto ins : insv)
 						{
 							DisplayCallstatistics(ins, BBprofCount == 0? BBfreqCount : BBprofCount);
@@ -295,10 +330,15 @@ namespace
 						errs() << "Affine loop found here\n";
 						//errs() << loop->getCanonicalInductionVariable()->getName() << "\n";
 					}*/
+						heatmp[&B] = hnode;
+						heatIDmp[id] = hnode;
+						id++;
 				}
 
 			}
 			errs() << '\n';
+
+			printheadnodeinfo();
 			return false;
 		}
 
