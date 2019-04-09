@@ -52,10 +52,15 @@ namespace
 
 	 struct VariableMetaInfo {
 		 AllocaInst *alloca;
+		 bool is_static_alloca;
+		 bool is_array_alloca;
+		 uint64_t arraysize;
 		 vector <Value *> defstack;
 		 SmallPtrSet<BasicBlock *, 32> defblocks;
 		 VariableMetaInfo(AllocaInst *ai) {
 			 alloca = ai;
+			 is_static_alloca = false;
+			 is_array_alloca = false;
 		 };
 
 	 };
@@ -324,7 +329,24 @@ namespace
 				AllocaInst *alloca;
 				if ((alloca = dyn_cast<AllocaInst>(&insref))) {
 					errs() << " \n Identified a alloca instruction";
+
+					bool is_interesting = (alloca->getAllocatedType()->isSized());
+					errs() << " \n issized (): " << is_interesting << "\nisstaticalloca: " << alloca->isStaticAlloca();
+					//errs() << "\n getallocasizeinbytes(): " << getAllocaSizeInBytes(alloca);
+
+
 					VariableMetaInfo  *varinfo = new VariableMetaInfo(alloca);
+					if (alloca->isStaticAlloca()) {
+						varinfo->is_static_alloca = true;
+					}
+
+					if (alloca->isArrayAllocation()) {
+						const ConstantInt *CI = dyn_cast<ConstantInt>(alloca->getArraySize());
+						
+						varinfo->is_array_alloca = true;
+						varinfo->arraysize = CI->getZExtValue();
+					}
+
 					if (Is_var_defed_and_used(varinfo)) {
 						// variableinfos
 						Variableinfos.push_back(varinfo);
