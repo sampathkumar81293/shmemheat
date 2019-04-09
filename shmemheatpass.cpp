@@ -5,10 +5,13 @@
  *
  * */
 
+#include "llvm/ADT/Statistic.h"
+#include "llvm/ADT/DenseMap.h"
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/CallSite.h"
 #include "llvm/IR/InstrTypes.h"
+#include "llvm/IR/InstIterator.h"
 #include "llvm/IR/Instructions.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/Module.h"
@@ -47,7 +50,15 @@ namespace
 		int getprofcount() { return profcount; }
 	};
 
-	 
+	 struct VariableMetaInfo {
+		 AllocaInst *alloca;
+		 vector <Value *> defstack;
+		 SmallPtrSet<BasicBlock *, 32> defblocks;
+		 VariableMetaInfo(AllocaInst *ai) {
+			 alloca = ai;
+		 };
+
+	 };
 
 	string ParseFunctionName(CallInst *call)
 	{
@@ -116,6 +127,9 @@ namespace
 	class shmemheat : public  BlockFrequencyInfoWrapperPass
 	{
 	public:
+
+		vector <VariableMetaInfo*> Variableinfos;
+		map < Instruction *, VariableMetaInfo* > Inst2VarInfo_map;
 		map <string, int> functionMap;
 		map < bbt, heatNode *> heatmp;
 		map < int , heatNode *> heatIDmp;
@@ -271,16 +285,57 @@ namespace
 			}
 			return interest;
 		}
+
+		bool Is_var_defed_and_used(VariableMetaInfo *varinfo) {
+			for (auto *use : varinfo->alloca->users()) {
+				Instruction *useinst;
+				if ((useinst = dyn_cast<LoadInst>(use))) {
+					Inst2VarInfo_map[useinst] = varinfo;
+				}
+				else if ((useinst = dyn_cast<StoreInst>(use)) ) {
+					if (useinst->getOperand(1) == varinfo->alloca) {
+						Inst2VarInfo_map[useinst] = varinfo;
+						varinfo->defblocks.insert(useinst->getParent() );
+					}
+					else {
+						return false;
+					}
+				}
+				else {
+					return false;
+				}
+			}
+			return true;
+		}
+
 		virtual bool runOnFunction(Function &Func)
 		{
 			errs().write_escaped(Func.getName());
-			errs() << " Function Name: \t" << Func.getName() << "\n\t\t Function size " << Func.size();
+			errs() << " Function Name: " << Func.getName();
+			errs() << "\n Function size " << Func.size();
 		/*	for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
 			{
 				runOnBasicBlock(*Its);
 			}
 			*/
 			//printResult();
+
+			for (auto &insref: Func.getEntryBlock()) {
+				AllocaInst *alloca;
+				if ((alloca = dyn_cast<AllocaInst>(&insref))) {
+					errs() << " \n Identified a alloca instruction";
+					VariableMetaInfo  *varinfo = new VariableMetaInfo(alloca);
+					if (Is_var_defed_and_used(varinfo)) {
+						// variableinfos
+						Variableinfos.push_back(varinfo);
+					}
+					else {
+						delete varinfo;
+					}
+
+				}
+			}
+
 			functionMap.clear();
 
 			errs() << "\n\n************************************************************************ \n\n";
@@ -312,9 +367,7 @@ namespace
 					hnode->setfreqcount(BBfreqCount);
 					hnode->setprofcount(BBprofCount);
 					errs() << "**********************************\nprof count: " << BBprofCount << "\t freq count: " << BBfreqCount;
-					/*loop = LI.getLoopFor(&B);
-					if (loop == false)
-					{*/
+
 						errs() << " This block  : \t" << B.getName() << " has\t " << B.size() << " Instructions.\n";
 						errs() << " Found " << callinst.size() << " shmem related call instructions\n";
 						errs() << " Display Call statistics: \n";
@@ -323,13 +376,15 @@ namespace
 						{
 							DisplayCallstatistics(ins, BBprofCount == 0? BBfreqCount : BBprofCount);
 						}
-					/*}
+					loop = LI.getLoopFor(&B);
+					if (loop == false){
+						errs() << "Not an affine loop. Not of some interest\n";
+					}
 					else {
-
 						// handle cases here
 						errs() << "Affine loop found here\n";
 						//errs() << loop->getCanonicalInductionVariable()->getName() << "\n";
-					}*/
+					}
 						heatmp[&B] = hnode;
 						heatIDmp[id] = hnode;
 						id++;
@@ -337,11 +392,10 @@ namespace
 
 			}
 			errs() << '\n';
-
 			printheadnodeinfo();
+
 			return false;
 		}
-
 	};
 
 	char shmemheat::ID = 0;
