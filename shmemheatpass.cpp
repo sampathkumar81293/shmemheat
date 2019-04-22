@@ -30,40 +30,60 @@ using namespace std;
 namespace
 {
 	typedef  BasicBlock* bbt;
-	
+	/* This a custom structur to preserve information that ius relevant to this pass*/
 
-	 struct heatNode {
-		int ID;
-		bbt bb;
-		int profcount;
-		int freqcount;
-		int noofcallins;
-		bool imp;
-		heatNode(int id, bbt bb ) : ID(id), bb(bb) , profcount(0) , freqcount(0), noofcallins(0), imp(false){}
+	struct heatNode {
+		int ID;/* ID for future use*/
+		bbt bb; /* pointer to basic block*/
+		int profcount; /* count of profile analysis*/
+		int freqcount; /* estimated frequecy count of the BB */
+		int noofcallins; /* contains the number of call instructions. This is handy for further analysis*/
+		bool imp; /* marks the importance of the given  BB */
+
+		/* constructor*/
+		heatNode(int id, bbt bb) : ID(id), bb(bb), profcount(0), freqcount(0), noofcallins(0), imp(false) {}
+		/* setter*/
 		void setID(int ID) { this->ID = ID; }
+		/* getter*/
 		int getID() { return ID; }
+		/* setter*/
 		void setnoofcallins(int ID) { this->noofcallins = ID; }
+		/* getter*/
 		int getnoofcallins() { return noofcallins; }
+		/* setter*/
 		void setfreqcount(int fc) { this->freqcount = fc; }
+		/* getter*/
 		int getfreqcount() { return freqcount; }
+		/* setter*/
 		void setprofcount(int pc) { this->profcount = pc; }
+		/* getter*/
 		int getprofcount() { return profcount; }
 	};
+	/*  This struct stores the  metainfo of the variables that are declared at  the start.
+		This are generally alloca instructions. LLVM generates alloca instructions for head and stack allocated variables.
+		These variables are used later by the IR. This is information is cructial in finsing out whether the given variable is
+		being used by the Basic Block of interest.
+	*/
+	struct VariableMetaInfo {
+		/* pointer to alloca instruciton*/
+		AllocaInst *alloca;
+		/* Marks if the given alloca instrucion has static size allcoation parameter*/
+		bool is_static_alloca;
+		/* marks if the intruction pertains to an array*/
+		bool is_array_alloca;
 
-	 struct VariableMetaInfo {
-		 AllocaInst *alloca;
-		 bool is_static_alloca;
-		 bool is_array_alloca;
-		 uint64_t arraysize;
-		 vector <Value *> defstack;
-		 SmallPtrSet<BasicBlock *, 32> defblocks;
-		 VariableMetaInfo(AllocaInst *ai) {
-			 alloca = ai;
-			 is_static_alloca = false;
-			 is_array_alloca = false;
-		 };
+		/* Holds the array size if is_array_alloca is true */
+		uint64_t arraysize;
+		/* places where the variable is defined. Otherwise DEF's indicate that the variable is being updated*/
+		vector <Value *> defstack;
+		SmallPtrSet<BasicBlock *, 32> defblocks;
+		VariableMetaInfo(AllocaInst *ai) {
+			alloca = ai;
+			is_static_alloca = false;
+			is_array_alloca = false;
+		};
 
-	 };
+	};
 
 	string ParseFunctionName(CallInst *call)
 	{
@@ -76,72 +96,131 @@ namespace
 		}
 	}
 
-	void PrintFunctionArgs(CallInst *ci)
-	{
-		// gets function name from the call instruction
-		string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
-		// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-		if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
-			for (auto i = 0; i < ci->getNumArgOperands(); i++)
-			{
-				ci->getArgOperand(i)->dump();
-				if (ci->getArgOperand(i)->getType()->isPointerTy())
-				{
-					errs() << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
-				}
-				else
-				{
-					//errs() << ci->getArgOperand(i)->getName().str() << "\t";
-					//errs() << ci->getOperand(i);
-				}
-			}
-			//isIntegerTy()
-			//case 1
-			Type *a3, *a4;
-			Value *v3 = ci->getArgOperand(3);
-			a3 = ci->getArgOperand(2)->getType();
-			a4 = ci->getArgOperand(3)->getType();
-			a4->dump();
-			if (a4->isIntegerTy())
-			{
-				// compare the values and see if it out of current PE
-				if (ConstantInt* cint = dyn_cast<ConstantInt>(ci->getArgOperand(3))) {
-					errs() << "const integer type\n";
-					// foo indeed is a ConstantInt, we can use CI here
-					errs() << "Const value: " << cint->getSExtValue() << "\n";
-				}
-				else {
-					// foo was not actually a ConstantInt
-					errs() << "Not a const\n";
-				}
-			}
-			else
-			{
-				// Different types. It must me an integert according to the put and get definitions
-				//errs() << "Different types\n";
-			}
-			//a3->dump();
-			//errs() << a3->getSExtValue() << " get value\n";
-			//ci->getArgOperand(2)->getSExtValue();
-			//ci->getArgOperand(2)->dump();
-			errs() << "\nPrinting the actual PE argument: ";
-			ci->getArgOperand(3)->dump();
-			errs() << "************************************************************************ \n\n";
-		}
-	}
+
 	class shmemheat : public  BlockFrequencyInfoWrapperPass
 	{
 	public:
 
+		/* Vector of all variable metainformation */
 		vector <VariableMetaInfo*> Variableinfos;
-		map < Instruction *, VariableMetaInfo* > Inst2VarInfo_map;
+
+		/* map of instruction and it's variable meta information*/
+		DenseMap < Instruction *, VariableMetaInfo* > Inst2VarInfo_map;
 		map <string, int> functionMap;
 		map < bbt, heatNode *> heatmp;
-		map < int , heatNode *> heatIDmp;
+		map < int, heatNode *> heatIDmp;
 		static char ID;
 		int id = 1;
 		shmemheat() : BlockFrequencyInfoWrapperPass() {}
 		~shmemheat() {}
+
+
+		void peek_into_alloca_mapppings(Value *v1)
+		{
+			if (v1->getType()->isPointerTy()) {
+				//errs() << "1. pointer type\n";
+				if (isa<LoadInst>(v1)) {
+					errs() << "Load type\n";
+
+					Instruction *useinst;
+					if ((useinst = cast<LoadInst>(v1))) {
+						VariableMetaInfo *vinfo = Inst2VarInfo_map[useinst];
+						//errs() << "\nPrinting the alloca: \t";
+						//errs() << vinfo->alloca->dump() << "\n";
+						errs() << "Found alloca mapped instruction\n";
+					}
+				}
+				else if (isa<AllocaInst>(v1)) {
+					errs() << "Alloca type\n";
+					Instruction *allocinst;
+					if ((allocinst = cast<AllocaInst>(v1))) {
+						for (auto vinfo : Variableinfos) {
+
+							errs() << "\nCalculated flag: " << (vinfo->alloca == allocinst);
+
+							if (vinfo->alloca == allocinst) {
+								//errs() << "\nPrinting the alloca: \t";
+								//errs() << vinfo->alloca->dump() << "\n";
+								errs() << "Found alloca direct instruction\n";
+								break;
+							}
+						}
+					}
+				}
+			}
+		}
+
+		void PrintFunctionArgs(CallInst *ci)
+		{
+			// gets function name from the call instruction
+			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
+			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
+			Value *v1, *v2, *v3, *v4;
+			LoadInst *li1, *li2;
+
+			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+
+				v1 = ci->getArgOperand(0);
+				v2 = ci->getArgOperand(1);
+				v3 = ci->getArgOperand(2);
+				v4 = ci->getArgOperand(3);
+
+				peek_into_alloca_mapppings(v1);
+				peek_into_alloca_mapppings(v2);
+
+				/*
+
+				if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+
+					for (auto i = 0; i < ci->getNumArgOperands(); i++)
+					{
+						ci->getArgOperand(i)->dump();
+						if (ci->getArgOperand(i)->getType()->isPointerTy())
+						{
+							errs() << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
+						}
+						else
+						{
+							//errs() << ci->getArgOperand(i)->getName().str() << "\t";
+							//errs() << ci->getOperand(i);
+						}
+					}
+					//isIntegerTy()
+					//case 1
+					Type *a3, *a4;
+					Value *v3 = ci->getArgOperand(3);
+					a3 = ci->getArgOperand(2)->getType();
+					a4 = ci->getArgOperand(3)->getType();
+					a4->dump();
+					if (a4->isIntegerTy())
+					{
+						// compare the values and see if it out of current PE
+						if (ConstantInt* cint = dyn_cast<ConstantInt>(ci->getArgOperand(3))) {
+							errs() << "const integer type\n";
+							// foo indeed is a ConstantInt, we can use CI here
+							errs() << "Const value: " << cint->getSExtValue() << "\n";
+						}
+						else {
+							// foo was not actually a ConstantInt
+							errs() << "Not a const\n";
+						}
+					}
+					else
+					{
+						// Different types. It must me an integert according to the put and get definitions
+						//errs() << "Different types\n";
+					}
+					//a3->dump();
+					//errs() << a3->getSExtValue() << " get value\n";
+					//ci->getArgOperand(2)->getSExtValue();
+					//ci->getArgOperand(2)->dump();
+					errs() << "\nPrinting the actual PE argument: ";
+					ci->getArgOperand(3)->dump();
+					errs() << "************************************************************************ \n\n";
+				*/
+			}
+		}
+
 
 		int getNoOfNodes()
 		{
@@ -200,6 +279,7 @@ namespace
 				}
 			}
 		}
+
 		void DisplayCallstatistics(Instruction *ins, uint64_t &count)
 		{
 			Instruction* ii = ins;
@@ -207,14 +287,14 @@ namespace
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
 			errs() << "\t\tPrinting function name: " << cname << " occurs " << count << " times.\n";
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) 
+			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos)
 			{
 				for (auto i = 0; i < ci->getNumArgOperands(); i++)
 				{
 					//ci->getArgOperand(i)->dump();
 					if (ci->getArgOperand(i)->getType()->isPointerTy())
 					{
-						errs() << "\t\t"<<ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
+						errs() << "\t\t" << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
 					}
 					else
 					{
@@ -292,15 +372,18 @@ namespace
 		}
 
 		bool Is_var_defed_and_used(VariableMetaInfo *varinfo) {
+
 			for (auto *use : varinfo->alloca->users()) {
 				Instruction *useinst;
 				if ((useinst = dyn_cast<LoadInst>(use))) {
 					Inst2VarInfo_map[useinst] = varinfo;
+					//errs() << "\nLoad dump:\n";
+					//useinst->dump();
 				}
-				else if ((useinst = dyn_cast<StoreInst>(use)) ) {
+				else if ((useinst = dyn_cast<StoreInst>(use))) {
 					if (useinst->getOperand(1) == varinfo->alloca) {
 						Inst2VarInfo_map[useinst] = varinfo;
-						varinfo->defblocks.insert(useinst->getParent() );
+						varinfo->defblocks.insert(useinst->getParent());
 					}
 					else {
 						return false;
@@ -318,14 +401,11 @@ namespace
 			errs().write_escaped(Func.getName());
 			errs() << " Function Name: " << Func.getName();
 			errs() << "\n Function size " << Func.size();
-		/*	for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
-			{
-				runOnBasicBlock(*Its);
-			}
-			*/
+
+
 			//printResult();
 
-			for (auto &insref: Func.getEntryBlock()) {
+			for (auto &insref : Func.getEntryBlock()) {
 				AllocaInst *alloca;
 				if ((alloca = dyn_cast<AllocaInst>(&insref))) {
 					errs() << " \n Identified a alloca instruction";
@@ -342,7 +422,7 @@ namespace
 
 					if (alloca->isArrayAllocation()) {
 						const ConstantInt *CI = dyn_cast<ConstantInt>(alloca->getArraySize());
-						
+
 						varinfo->is_array_alloca = true;
 						varinfo->arraysize = CI->getZExtValue();
 					}
@@ -356,6 +436,16 @@ namespace
 					}
 
 				}
+			}
+
+
+			// Run the alloca identification in every call instruction
+			errs() << "\n\n************************************************************************ \n\n";
+			errs() << "Run the alloca identification in every call instruction \n";
+
+			for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
+			{
+				runOnBasicBlock(*Its);
 			}
 
 			functionMap.clear();
@@ -377,7 +467,7 @@ namespace
 			BPI.print(llvm::dbgs());
 
 
-			// iterate through each block 
+			// iterate through each block
 			for (auto &B : Func)
 			{
 				uint64_t BBprofCount = locBFI.getBlockProfileCount(&B).hasValue() ? locBFI.getBlockProfileCount(&B).getValue() : 0;
@@ -390,16 +480,16 @@ namespace
 					hnode->setprofcount(BBprofCount);
 					errs() << "**********************************\nprof count: " << BBprofCount << "\t freq count: " << BBfreqCount;
 
-						errs() << " This block  : \t" << B.getName() << " has\t " << B.size() << " Instructions.\n";
-						errs() << " Found " << callinst.size() << " shmem related call instructions\n";
-						errs() << " Display Call statistics: \n";
-						hnode->setnoofcallins(callinst.size());
-						for (auto ins : insv)
-						{
-							DisplayCallstatistics(ins, BBprofCount == 0? BBfreqCount : BBprofCount);
-						}
+					errs() << " This block  : \t" << B.getName() << " has\t " << B.size() << " Instructions.\n";
+					errs() << " Found " << callinst.size() << " shmem related call instructions\n";
+					errs() << " Display Call statistics: \n";
+					hnode->setnoofcallins(callinst.size());
+					for (auto ins : insv)
+					{
+						DisplayCallstatistics(ins, BBprofCount == 0 ? BBfreqCount : BBprofCount);
+					}
 					loop = LI.getLoopFor(&B);
-					if (loop == false){
+					if (loop == false) {
 						errs() << "Not an affine loop. Not of some interest\n";
 					}
 					else {
@@ -407,9 +497,9 @@ namespace
 						errs() << "Affine loop found here\n";
 						//errs() << loop->getCanonicalInductionVariable()->getName() << "\n";
 					}
-						heatmp[&B] = hnode;
-						heatIDmp[id] = hnode;
-						id++;
+					heatmp[&B] = hnode;
+					heatIDmp[id] = hnode;
+					id++;
 				}
 
 			}
