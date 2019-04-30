@@ -1,4 +1,4 @@
-/*
+﻿/*
  * CSE523
  * SAMPATH KUMAR KILAPARTHI
  * 112079198
@@ -22,6 +22,8 @@
 #include "llvm/Analysis/LoopInfo.h"
 #include "llvm/Support/raw_ostream.h"
 #include <map>
+#include <vector>
+#include <stack>
 
 
 using namespace llvm;
@@ -71,6 +73,8 @@ namespace
 		bool is_static_alloca;
 		/* marks if the intruction pertains to an array*/
 		bool is_array_alloca;
+		/* Info of whether this is a pointer or not */
+		bool isPointer;
 
 		/* Holds the array size if is_array_alloca is true */
 		uint64_t arraysize;
@@ -114,9 +118,26 @@ namespace
 		shmemheat() : BlockFrequencyInfoWrapperPass() {}
 		~shmemheat() {}
 
+		/*
+		 * This function peeks into the alloca instructions
+		 *
+		 */
 
-		void peek_into_alloca_mapppings(Value *v1)
+		bool find_alloca_from_vec(AllocaInst *AI, int *index) {
+			bool present = false;
+			for (int i = 0; i < Variableinfos.size(); i++) {
+				if (Variableinfos[i]->alloca == AI) {
+					*index = i;
+					present = true;
+					break;
+				}
+			}
+			return present;
+		}
+		void peek_into_alloca_mappings(Value *v1)
 		{
+			errs() << "Print argument type: " << *(v1->getType()) << "\n";
+			v1->dump();
 			if (v1->getType()->isPointerTy()) {
 				//errs() << "1. pointer type\n";
 				if (isa<LoadInst>(v1)) {
@@ -127,13 +148,20 @@ namespace
 						VariableMetaInfo *vinfo = Inst2VarInfo_map[useinst];
 						//errs() << "\nPrinting the alloca: \t";
 						//errs() << vinfo->alloca->dump() << "\n";
-						errs() << "Found alloca mapped instruction\n";
+						if (Inst2VarInfo_map.find(useinst) != Inst2VarInfo_map.end()) {
+							errs() << "Found alloca mapped instruction\n";
+						}
+						else {
+							errs() << "Couldn't find it";
+						}
+
 					}
 				}
 				else if (isa<AllocaInst>(v1)) {
 					errs() << "Alloca type\n";
-					Instruction *allocinst;
-					if ((allocinst = cast<AllocaInst>(v1))) {
+					//AllocaInst *allocinst;
+					int index = -1;
+					if (AllocaInst *allocinst = cast<AllocaInst>(v1)) {
 						for (auto vinfo : Variableinfos) {
 
 							errs() << "\nCalculated flag: " << (vinfo->alloca == allocinst);
@@ -141,9 +169,69 @@ namespace
 							if (vinfo->alloca == allocinst) {
 								//errs() << "\nPrinting the alloca: \t";
 								//errs() << vinfo->alloca->dump() << "\n";
-								errs() << "Found alloca direct instruction\n";
+
+								if (find_alloca_from_vec(allocinst, &index)) {
+									errs() << "Found alloca direct instruction\n";
+								}
+								else {
+									errs() << "Lookup failed\n";
+								}
 								break;
 							}
+						}
+					}
+				}
+				else if (isa<StoreInst>(v1))
+				{
+					errs() << "Found Store instruction\n";
+				}
+				else if (isa<GetElementPtrInst>(v1))
+				{
+					errs() << "Found GEPI instruction\n";
+					//AllocaInst *allocinst;
+					if (GetElementPtrInst *GEPI = cast<GetElementPtrInst>(v1)) {
+
+						errs() << GEPI->getNumOperands() << "\n";
+
+						for (int i = 0; i < GEPI->getNumOperands(); i++) {
+							errs() << "\t" << *(GEPI->getOperand(i)) << "\n";
+						}
+					}
+				}
+				else {
+					errs() << "Went to else case\n";
+				}
+			}
+			else {
+				errs() << "Not a pointer type argument\n";
+			}
+
+		}
+
+		/*
+		 * This function prints the function arguments
+		 */
+
+
+		void get_allocainst_for_every_operand(Instruction *ci , vector <Instruction *> &va) {
+			stack <Instruction *> s;
+			//vector <Instruction *> v;
+			Instruction *ii;
+			//ii = cast<Intruction>(*ci);
+			ii = ci;
+			s.push(ii);
+			bool flag = true;
+			while (!s.empty()) {
+				ii = s.top(); s.pop();
+				for (Use &U : ii->operands()) {
+					Value *v = U.get();
+					if (dyn_cast<Instruction>(v)) {
+						//errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ii << "\"" << ";\n";
+						//flag = true;
+						ii = dyn_cast<Instruction>(v);
+						s.push(ii);
+						if (AllocaInst *alloca = dyn_cast_or_null<AllocaInst>(ii)) {
+							va.push_back(ii);
 						}
 					}
 				}
@@ -158,15 +246,45 @@ namespace
 			Value *v1, *v2, *v3, *v4;
 			LoadInst *li1, *li2;
 
+			errs() << "Iterating over the operands on the call instruction\n";
+
+			vector <Instruction *> va;
+			for (Use &U : ci->operands()) {
+				va.clear();
+				Value *v = U.get();
+				if (dyn_cast<Instruction>(v)) {
+					//errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ci << "\"" << ";\n";
+					
+					get_allocainst_for_every_operand(dyn_cast<Instruction>(v) , va);
+					for (int i = 0; i < va.size(); i++) {
+						errs() << *(va[i]) <<"\n";
+					}
+					va.clear();
+
+				}
+			}
+
+
+			errs() << "Alloca instructions ended\n";
+			
+			
+
 			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+
+				errs() << "\n\nfunction args trace start\n";
+				Function* fn = ci->getCalledFunction();
+				//for (auto arg = fn->arg_begin(); arg != fn->arg_end(); ++arg) {
+					//errs() << *(arg) << "\n";
+				//}
+				errs() << "function args trace end\n\n";
 
 				v1 = ci->getArgOperand(0);
 				v2 = ci->getArgOperand(1);
 				v3 = ci->getArgOperand(2);
 				v4 = ci->getArgOperand(3);
 
-				peek_into_alloca_mapppings(v1);
-				peek_into_alloca_mapppings(v2);
+				peek_into_alloca_mappings(v1);
+				peek_into_alloca_mappings(v2);
 
 				/*
 
@@ -221,31 +339,27 @@ namespace
 			}
 		}
 
-
-		int getNoOfNodes()
-		{
+		int getNoOfNodes() {
 			return id - 1;
 		}
-		void getAnalysisUsage(AnalysisUsage &AU) const
-		{
+
+		void getAnalysisUsage(AnalysisUsage &AU) const {
 			AU.addRequired<BranchProbabilityInfoWrapperPass>();
 			AU.addRequired<LoopInfoWrapperPass>();
 			AU.setPreservesAll();
 		}
 
-		void printResult()
-		{
+		void printResult() {
 			// call instructions
 			errs() << "\n\t Call instructions:\t" << functionMap["call"];
 			errs() << '\n';
 		}
 
-		void printheadnodeinfo()
-		{
+		void printheadnodeinfo() {
+
 			int nodesize = getNoOfNodes();
 			heatNode *tmp = NULL;
-			for (int i = 1; i <= nodesize; i++)
-			{
+			for (int i = 1; i <= nodesize; i++) {
 				tmp = heatIDmp[i];
 				errs() << "\nID: " << tmp->getID();
 				errs() << "\nfreqcount: " << tmp->getfreqcount();
@@ -253,10 +367,11 @@ namespace
 				errs() << "\nNo of call instructions " << tmp->getnoofcallins() << "\n";
 			}
 		}
-		virtual bool runOnBasicBlock(BasicBlock &BB)
-		{
-			for (BasicBlock::iterator bbs = BB.begin(), bbe = BB.end(); bbs != bbe; ++bbs)
-			{
+
+		virtual bool runOnBasicBlock(BasicBlock &BB) {
+
+			for (BasicBlock::iterator bbs = BB.begin(), bbe = BB.end(); bbs != bbe; ++bbs) {
+
 				Instruction* ii = &(*bbs);
 				CallSite cs(ii);
 				if (!cs.getInstruction()) continue;
@@ -268,7 +383,7 @@ namespace
 						errs() << ii->getOperand(0)->getName();
 						errs() << *ii;
 					}
-					else if (cname.find("shmem") != std::string::npos) {
+					else if (cname.find("shmem") != std::string::npos && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos ) {
 						CallInst *ci = cast<CallInst>(ii);
 						//errs() << "\n\n\nFound  fxn call: " << *ii << "\n";
 						errs() << "Function call: " << fptr->getName() << "\n";
@@ -287,17 +402,16 @@ namespace
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
 			errs() << "\t\tPrinting function name: " << cname << " occurs " << count << " times.\n";
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos)
-			{
-				for (auto i = 0; i < ci->getNumArgOperands(); i++)
-				{
+			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+
+				for (auto i = 0; i < ci->getNumArgOperands(); i++) {
+
 					//ci->getArgOperand(i)->dump();
-					if (ci->getArgOperand(i)->getType()->isPointerTy())
-					{
+					if (ci->getArgOperand(i)->getType()->isPointerTy()) {
+
 						errs() << "\t\t" << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
 					}
-					else
-					{
+					else {
 						//errs() << ci->getArgOperand(i)->getName().str() << "\t";
 						//errs() << ci->getOperand(i);
 					}
@@ -309,8 +423,8 @@ namespace
 				a3 = ci->getArgOperand(2)->getType();
 				a4 = ci->getArgOperand(3)->getType();
 				//a4->dump();
-				if (a4->isIntegerTy())
-				{
+				if (a4->isIntegerTy()) {
+
 					// compare the values and see if it out of current PE
 					if (ConstantInt* cint = dyn_cast<ConstantInt>(ci->getArgOperand(3))) {
 						errs() << "const integer type\n";
@@ -322,8 +436,7 @@ namespace
 						errs() << "Not a const\n";
 					}
 				}
-				else
-				{
+				else {
 					// Different types. It must me an integert according to the put and get definitions
 					//errs() << "Different types\n";
 				}
@@ -333,18 +446,17 @@ namespace
 			}
 		}
 
-		virtual bool isCallOfInterest(string &cname)
-		{
+		virtual bool isCallOfInterest(string &cname) {
+
 			return (cname.find("shmem") != std::string::npos  && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos);
+
 		}
 
-		virtual bool isShmemCall(string &cname)
-		{
+		virtual bool isShmemCall(string &cname) {
 			return (cname.find("shmem") != std::string::npos);
 		}
 
-		virtual bool isBlockOfInterest(BasicBlock &B, vector <Instruction *> &vec, vector <Instruction *> &callinst)
-		{
+		virtual bool isBlockOfInterest(BasicBlock &B, vector <Instruction *> &vec, vector <Instruction *> &callinst) {
 			bool interest = false;
 			for (auto &I : B)
 			{
@@ -373,14 +485,40 @@ namespace
 
 		bool Is_var_defed_and_used(VariableMetaInfo *varinfo) {
 
+
+			int i = 1;
 			for (auto *use : varinfo->alloca->users()) {
 				Instruction *useinst;
+				errs() << i++ << " \t" << *(dyn_cast<Instruction>(use)) << "\n";
+
+				if (useinst = dyn_cast<GetElementPtrInst>(use)) {
+					errs() << "*******************GEPI found\n";
+				}
+
+			}
+
+			/*for (auto *use : varinfo->alloca->users()) {
+				Instruction *useinst;
+				errs() << i++ <<  " \t" << *(dyn_cast<Instruction>(use)) << "\n";
+
+				if (useinst = dyn_cast<GetElementPtrInst>(use)) {
+					errs() << "*******************GEPI found\n";
+				}
+
+
 				if ((useinst = dyn_cast<LoadInst>(use))) {
-					Inst2VarInfo_map[useinst] = varinfo;
-					//errs() << "\nLoad dump:\n";
-					//useinst->dump();
+					//useinst->print(errs()); errs() << "\n";
+					if (Inst2VarInfo_map.find(useinst) == Inst2VarInfo_map.end()) {
+						Inst2VarInfo_map[useinst] = varinfo;
+						//errs() << "\nLoad dump:\n";
+						//useinst->dump();
+					}
+					else {
+						errs() << "Replacing an existing entry\n";
+					}
 				}
 				else if ((useinst = dyn_cast<StoreInst>(use))) {
+					//useinst->print(errs()); errs() << "\n";
 					if (useinst->getOperand(1) == varinfo->alloca) {
 						Inst2VarInfo_map[useinst] = varinfo;
 						varinfo->defblocks.insert(useinst->getParent());
@@ -390,41 +528,134 @@ namespace
 					}
 				}
 				else {
+					errs() << "|||||||||||Looping out|||||||||||||||||||";
+					//useinst->print(errs()); errs() << "\n";
 					return false;
 				}
-			}
+			}*/
 			return true;
 		}
 
 		virtual bool runOnFunction(Function &Func)
 		{
 			errs().write_escaped(Func.getName());
-			errs() << " Function Name: " << Func.getName();
-			errs() << "\n Function size " << Func.size();
+			errs() << "\n\n************************************************************************ \n\n";
 
+			errs() << "\nFunction Name: " << Func.getName();
+			vector<Instruction *> worklist;
+			/*for (auto block = Func.getBasicBlockList().begin(); block != Func.getBasicBlockList().end(); block++)
+			{
+				for (auto inst = block->begin(); inst != block->end(); inst++)
+				{
+					for (Use &U : inst->operands())
+					{
+						Value *v = U.get();
+						if (dyn_cast<Instruction>(v))
+						{
+							errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *inst << "\"" << ";\n";
+						}
+					}
+					errs() << "used\n";
+				}
+			}*/
+
+
+
+
+			/*errs() << "Print use and defs\n";
+
+			//std::vector<Instruction *> worklist;
+			for (inst_iterator I = inst_begin(Func), E = inst_end(Func); I != E; ++I) {
+				worklist.push_back(&*I);
+			}
+
+			// def-use chain for Instruction
+			for (std::vector<Instruction *>::iterator iter = worklist.begin(); iter != worklist.end(); ++iter) {
+				Instruction* instr = *iter;
+				errs() << "def: " << *instr << "\n";
+				for (Value::use_iterator i = instr->use_begin(), ie = instr->use_end(); i != ie; ++i) {
+					Value *v = *i;
+					Instruction *vi = dyn_cast<Instruction>(*i);
+					errs() << "\t\t" << *vi << "\n";
+				}
+			} 
+			
+			*/
+			
+			// use-def chain for Instruction 
+			/*for (std::vector<Instruction *>::iterator iter = worklist.begin(); iter != worklist.end(); ++iter) {
+				Instruction* instr = *iter;
+				errs() << "use: " << *instr << "\n";
+				for (User::op_iterator i = instr->op_begin(), e = instr->op_end(); i != e; ++i) {
+					Value *v = *i;
+					Instruction *vi = dyn_cast<Instruction>(*i);
+					errs() << "\t\t" << *vi << "\n";
+				}
+			}*/
+			//errs() << "\n\n used\n";
+
+
+			errs() << "\n\tFunction size " << Func.size();
 
 			//printResult();
+			// Get hold of allcoa instructions . These are present at the start of Function. So we use getEntryBlock()
 
 			for (auto &insref : Func.getEntryBlock()) {
-				AllocaInst *alloca;
-				if ((alloca = dyn_cast<AllocaInst>(&insref))) {
-					errs() << " \n Identified a alloca instruction";
 
+				Instruction *I = &insref;
+
+				// We check if the given  instruction can be casted to a Alloca  instruction.
+
+				if (AllocaInst *alloca = dyn_cast_or_null<AllocaInst>(&insref)) {
+					//errs() << " \n Identified a alloca instruction : " << (I)->getNumOperands();
+
+					/* This sets if the alloca instruction is of specific size or not.*/
 					bool is_interesting = (alloca->getAllocatedType()->isSized());
-					errs() << " \n issized (): " << is_interesting << "\nisstaticalloca: " << alloca->isStaticAlloca();
+					//errs() << " \n issized (): " << is_interesting << "\nisstaticalloca: " << alloca->isStaticAlloca();
+					//errs() << " is array allocation: " << alloca->isArrayAllocation();
 					//errs() << "\n getallocasizeinbytes(): " << getAllocaSizeInBytes(alloca);
+					bool isArray = alloca->isArrayAllocation() || alloca->getType()->getElementType()->isArrayTy();
 
+					errs() << "\nPointer type allocation: " << alloca->getAllocatedType()->isPointerTy();
+					errs() << "\n Array type allocation: " << alloca->getAllocatedType()->isArrayTy();
+					//if (isArray) errs() << " array[" << *(alloca->getArraySize()) << "]"  << *(alloca->getOperand(0)) <<"\n";
 
 					VariableMetaInfo  *varinfo = new VariableMetaInfo(alloca);
+
+					/* tells if it is sized*/
 					if (alloca->isStaticAlloca()) {
 						varinfo->is_static_alloca = true;
 					}
+					/* Tells if the allcoa is a pointer allocation*/
+					if (alloca->getAllocatedType()->isPointerTy()) {
+						varinfo->isPointer = true;
+					}
+					/* check if an allocation is array and retrieve it's size*/
+					if (isArray || alloca->getAllocatedType()->isArrayTy()) {
 
-					if (alloca->isArrayAllocation()) {
+						/*The AllocaInst instruction allocates stack memory.The value that it
+							returns is always a pointer to memory.
+
+							You should run an experiment to double - check this, but I believe
+							AllocaInst::getType() returns the type of the value that is the result
+							of the alloca while AllocaInst::getAllocatedType() returns the type of
+							the value that is allocated.For example, if the alloca allocates a
+							struct { int; int }, then getAllocatedType() returns a struct type and
+							getType() return a "pointer to struct" type.*/
+
+							//errs() << "size : " << cast<ArrayType>(alloca->getAllocatedType())->getNumElements() << "\n";
+						errs() << "Allocated type" << *(alloca->getAllocatedType()) << " \n";
+
+						Value* arraysize = alloca->getArraySize();
+						/*Value* totalsize = ConstantInt::get(arraysize->getType(), CurrentDL->getTypeAllocSize(II->getAllocatedType()));
+						totalsize = Builder->CreateMul(totalsize, arraysize);
+						totalsize = Builder->CreateIntCast(totalsize, MySizeType, false);
+						TheState.SetSizeForPointerVariable(II, totalsize);*/
 						const ConstantInt *CI = dyn_cast<ConstantInt>(alloca->getArraySize());
-
 						varinfo->is_array_alloca = true;
-						varinfo->arraysize = CI->getZExtValue();
+						varinfo->arraysize = cast<ArrayType>(alloca->getAllocatedType())->getNumElements();
+						//varinfo->arraysize = CI->getZExtValue();
+						errs() << "\nAlloca instruction is an array inst of size : " << *(CI) << " sz  " << varinfo->arraysize;
 					}
 
 					if (Is_var_defed_and_used(varinfo)) {
@@ -434,7 +665,6 @@ namespace
 					else {
 						delete varinfo;
 					}
-
 				}
 			}
 
@@ -516,59 +746,124 @@ namespace
 
 
 
+/*bool UsingArray = false;
+//errs() << "Number of opeands: " << I->getNumOperands() << "\n";
+for (unsigned num = 0; num < I->getNumOperands(); ++num)
+	if (isa<ArrayType>(I->getOperand(num)->getType())) {
+		errs() << "\nAlloca instruction is an array inst";
+		UsingArray = true;
+	}*/
+
+	//I->print(errs());
+	//errs() << "************\n";
+	//errs() << "number of operands : " << insref.getNumOperands();
+	//insref.dump();
+	//errs() << "\n";
 
 
-/*virtual bool runOnModule(Module &M)
-{
-	for (auto F = M.begin(), E = M.end(); F != E; ++F)
+
+	/*virtual bool runOnModule(Module &M)
 	{
-		runOnFunction(*F);
-	}
-	return false;
-}*/
+		for (auto F = M.begin(), E = M.end(); F != E; ++F)
+		{
+			runOnFunction(*F);
+		}
+		return false;
+	}*/
 
 
-//Value* val = arg;
-//errs() << val->getName().str() << " -> " << "\n";
-//errs() << ci->getArgOperand(i)->getName() << " \t";
-//errs() << "\t\t\t\t"<< ci->getArgOperand(i)->getValue() << "\n";
+	//Value* val = arg;
+	//errs() << val->getName().str() << " -> " << "\n";
+	//errs() << ci->getArgOperand(i)->getName() << " \t";
+	//errs() << "\t\t\t\t"<< ci->getArgOperand(i)->getValue() << "\n";
 
 
-//if (isa<CallInst>(ii)) {
-/*
-if (string(bbs->getOpcodeName()) == "call") {
-
-		CallInst *ci = cast<CallInst>(ii);
-		//errs() << "\t\t "<< cast<CallInst>(ii).getCalledFunction().getName()<< "\n";
-		errs() << "\t\t "<< dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts()).getName()<< "\n";
-		errs() << "\t\t"<<ParseFunctionName(ci) << "\n";
-		PrintFunctionArgs(ci);
-		errs() << bbs->getOpcodeName() << '\t';
-		bbs->printAsOperand(errs(), false);
-		errs() << '\n';
-		functionMap[string(bbs->getOpcodeName())]++;
-	}
-	*/
-
-
-
+	//if (isa<CallInst>(ii)) {
 	/*
-
 	if (string(bbs->getOpcodeName()) == "call") {
 
-		CallInst *ci = cast<CallInst>(ii);
-		//errs() << "\t\t "<< cast<CallInst>(ii).getCalledFunction().getName()<< "\n";
-		//errs() << "\t\t BokkaBokka" << dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str() << "\n";
-		//errs() << "\t\t" << ParseFunctionName(ci) << "\n";
-		//PrintFunctionArgs(ci);
-		string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
-		if (cname.find("sh_") != std::string::npos) {
-
+			CallInst *ci = cast<CallInst>(ii);
+			//errs() << "\t\t "<< cast<CallInst>(ii).getCalledFunction().getName()<< "\n";
+			errs() << "\t\t "<< dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts()).getName()<< "\n";
+			errs() << "\t\t"<<ParseFunctionName(ci) << "\n";
+			PrintFunctionArgs(ci);
 			errs() << bbs->getOpcodeName() << '\t';
 			bbs->printAsOperand(errs(), false);
 			errs() << '\n';
 			functionMap[string(bbs->getOpcodeName())]++;
 		}
-	}
+		*/
 
-	*/
+
+
+		/*
+
+		if (string(bbs->getOpcodeName()) == "call") {
+
+			CallInst *ci = cast<CallInst>(ii);
+			//errs() << "\t\t "<< cast<CallInst>(ii).getCalledFunction().getName()<< "\n";
+			//errs() << "\t\t BokkaBokka" << dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str() << "\n";
+			//errs() << "\t\t" << ParseFunctionName(ci) << "\n";
+			//PrintFunctionArgs(ci);
+			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
+			if (cname.find("sh_") != std::string::npos) {
+
+				errs() << bbs->getOpcodeName() << '\t';
+				bbs->printAsOperand(errs(), false);
+				errs() << '\n';
+				functionMap[string(bbs->getOpcodeName())]++;
+			}
+		}
+
+		*/
+
+		/*
+
+			explain what  needs to be done
+			Problmes: eeverywhere
+			ex: which poart to use
+				differentia; chckpoint system
+					use later
+
+
+					explain:
+						example: wih examples
+
+
+						Have them side by side and exaplaint
+
+
+
+						Title:
+						Compiler support for Fault Tolerance
+
+
+						Many of today’s compute clusters are large systems consisting of hundreds to thousands of compute nodes.
+Long-running parallel applications typically use parallel programming libraries to move data between the
+nodes. Many of them are time sensitive real time applications which are bounded within specified time frames.
+Since nodes may fail while a job is still active, programs must be designed so that they are able to
+continue despite the occurrence of faults. The most common way involves saving interim data at regular
+intervals (so-called checkpoints) in such a way that the code can be restarted with the most recent
+checkpoint after a critical failure. Since writing out data is expensive, help to optimize the use of
+checkpoints is valuable. A fault tolerant system would reliably provide an intended service even in the
+presence of critical failures
+
+Simulators which are based on Weather , Petroleum Reserve Calculations, Verilog VHDL etc typically run for days. These are
+time sensitive, memory intensive applications. This criticality in time is what distinguishes the Real time systems from non- critical ones.
+While Our systems should be tolerant towards any faults, we should also have suitable mechanisms to recover from any potential
+hardware or software faults.
+
+LLVM is fast becoming the vehicle of choice for a wide variety of compiler research and development
+activities and is also increasingly being adopted by hardware vendors to provide compiler support for
+parallel programming interfaces. In this project, LLVM will be extended to support efficient checkpointing.
+
+ Learn the basics of fault tolerance, esp. for parallel applications written using MPI or OpenSHMEM
+ Review the literature on compiler support for improving the efficiency of Checkpoint Restart (and/or
+for simplifying its use)
+ Extend LLVM to analyze its use of data (especially arrays in loops) in order to decide what data
+objects need to be most frequently checkpointed
+ Develop and implement in LLVM a strategy for deciding whether it is profitable to perform
+checkpointing or whether data structures should be recomputed
+
+
+		*/
