@@ -62,8 +62,8 @@ namespace
 		int getprofcount() { return profcount; }
 	};
 	/*  This struct stores the  metainfo of the variables that are declared at  the start.
-		This are generally alloca instructions. LLVM generates alloca instructions for head and stack allocated variables.
-		These variables are used later by the IR. This is information is cructial in finsing out whether the given variable is
+		This are generally alloca instructions. LLVM generates alloca instructions for heap and stack allocated variables.
+		These variables are used later by the IR. This is information is cructial in finding out whether the given variable is
 		being used by the Basic Block of interest.
 	*/
 	struct VariableMetaInfo {
@@ -89,6 +89,19 @@ namespace
 
 	};
 
+
+
+	struct CallMetaInfo {
+		/* pointer to Call instruction*/
+		CallInst *ci;
+		vector< vector<Instruction *>> vva;
+		CallMetaInfo(CallInst *cinst) {
+			ci = cinst;
+			vva.clear();
+		};
+
+	};
+
 	string ParseFunctionName(CallInst *call)
 	{
 		auto *fptr = call->getCalledFunction();
@@ -110,6 +123,7 @@ namespace
 
 		/* map of instruction and it's variable meta information*/
 		DenseMap < Instruction *, VariableMetaInfo* > Inst2VarInfo_map;
+		vector < CallMetaInfo *>  callinstvec;
 		map <string, int> functionMap;
 		map < bbt, heatNode *> heatmp;
 		map < int, heatNode *> heatIDmp;
@@ -213,7 +227,7 @@ namespace
 		 */
 
 
-		void get_allocainst_for_every_operand(Instruction *ci , vector <Instruction *> &va) {
+		void get_allocainst_for_every_operand(Instruction *ci, vector <Instruction *> &va) {
 			stack <Instruction *> s;
 			//vector <Instruction *> v;
 			Instruction *ii;
@@ -238,7 +252,7 @@ namespace
 			}
 		}
 
-		void PrintFunctionArgs(CallInst *ci)
+		void PrintFunctionArgs(CallInst *ci, CallMetaInfo *cmi)
 		{
 			// gets function name from the call instruction
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
@@ -248,26 +262,26 @@ namespace
 
 			errs() << "Iterating over the operands on the call instruction\n";
 
-			vector <Instruction *> va;
+
 			for (Use &U : ci->operands()) {
+				vector <Instruction *> va;
 				va.clear();
 				Value *v = U.get();
 				if (dyn_cast<Instruction>(v)) {
 					//errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ci << "\"" << ";\n";
-					
-					get_allocainst_for_every_operand(dyn_cast<Instruction>(v) , va);
-					for (int i = 0; i < va.size(); i++) {
-						errs() << *(va[i]) <<"\n";
-					}
-					va.clear();
 
+					get_allocainst_for_every_operand(dyn_cast<Instruction>(v), va);
+					for (int i = 0; i < va.size(); i++) {
+						errs() << *(va[i]) << "\n";
+					}
+					cmi->vva.push_back(va);
 				}
 			}
 
 
 			errs() << "Alloca instructions ended\n";
-			
-			
+
+
 
 			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
 
@@ -383,13 +397,15 @@ namespace
 						errs() << ii->getOperand(0)->getName();
 						errs() << *ii;
 					}
-					else if (cname.find("shmem") != std::string::npos && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos ) {
+					else if (cname.find("shmem") != std::string::npos && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
 						CallInst *ci = cast<CallInst>(ii);
 						//errs() << "\n\n\nFound  fxn call: " << *ii << "\n";
 						errs() << "Function call: " << fptr->getName() << "\n";
 						//errs() << "\t\t\t No of arguments: " << fptr->arg_size() << "\n";
 						//errs() << "\t this gets arguments properly: " << ci->getNumArgOperands() << "\n";
-						PrintFunctionArgs(ci);
+						CallMetaInfo *cmi = new CallMetaInfo(ci);
+						PrintFunctionArgs(ci, cmi);
+						callinstvec.push_back(cmi);
 					}
 				}
 			}
@@ -487,19 +503,18 @@ namespace
 
 
 			int i = 1;
-			for (auto *use : varinfo->alloca->users()) {
+			/*for (auto *use : varinfo->alloca->users()) {
 				Instruction *useinst;
 				errs() << i++ << " \t" << *(dyn_cast<Instruction>(use)) << "\n";
 
 				if (useinst = dyn_cast<GetElementPtrInst>(use)) {
 					errs() << "*******************GEPI found\n";
 				}
+			}*/
 
-			}
-
-			/*for (auto *use : varinfo->alloca->users()) {
+			for (auto *use : varinfo->alloca->users()) {
 				Instruction *useinst;
-				errs() << i++ <<  " \t" << *(dyn_cast<Instruction>(use)) << "\n";
+				errs() << i++ << " \t" << *(dyn_cast<Instruction>(use)) << "\n";
 
 				if (useinst = dyn_cast<GetElementPtrInst>(use)) {
 					errs() << "*******************GEPI found\n";
@@ -532,7 +547,7 @@ namespace
 					//useinst->print(errs()); errs() << "\n";
 					return false;
 				}
-			}*/
+			}
 			return true;
 		}
 
@@ -559,51 +574,13 @@ namespace
 				}
 			}*/
 
-
-
-
-			/*errs() << "Print use and defs\n";
-
-			//std::vector<Instruction *> worklist;
-			for (inst_iterator I = inst_begin(Func), E = inst_end(Func); I != E; ++I) {
-				worklist.push_back(&*I);
-			}
-
-			// def-use chain for Instruction
-			for (std::vector<Instruction *>::iterator iter = worklist.begin(); iter != worklist.end(); ++iter) {
-				Instruction* instr = *iter;
-				errs() << "def: " << *instr << "\n";
-				for (Value::use_iterator i = instr->use_begin(), ie = instr->use_end(); i != ie; ++i) {
-					Value *v = *i;
-					Instruction *vi = dyn_cast<Instruction>(*i);
-					errs() << "\t\t" << *vi << "\n";
-				}
-			} 
-			
-			*/
-			
-			// use-def chain for Instruction 
-			/*for (std::vector<Instruction *>::iterator iter = worklist.begin(); iter != worklist.end(); ++iter) {
-				Instruction* instr = *iter;
-				errs() << "use: " << *instr << "\n";
-				for (User::op_iterator i = instr->op_begin(), e = instr->op_end(); i != e; ++i) {
-					Value *v = *i;
-					Instruction *vi = dyn_cast<Instruction>(*i);
-					errs() << "\t\t" << *vi << "\n";
-				}
-			}*/
-			//errs() << "\n\n used\n";
-
-
 			errs() << "\n\tFunction size " << Func.size();
 
 			//printResult();
 			// Get hold of allcoa instructions . These are present at the start of Function. So we use getEntryBlock()
 
 			for (auto &insref : Func.getEntryBlock()) {
-
 				Instruction *I = &insref;
-
 				// We check if the given  instruction can be casted to a Alloca  instruction.
 
 				if (AllocaInst *alloca = dyn_cast_or_null<AllocaInst>(&insref)) {
@@ -838,32 +815,53 @@ for (unsigned num = 0; num < I->getNumOperands(); ++num)
 						Compiler support for Fault Tolerance
 
 
-						Many of today’s compute clusters are large systems consisting of hundreds to thousands of compute nodes.
-Long-running parallel applications typically use parallel programming libraries to move data between the
-nodes. Many of them are time sensitive real time applications which are bounded within specified time frames.
-Since nodes may fail while a job is still active, programs must be designed so that they are able to
-continue despite the occurrence of faults. The most common way involves saving interim data at regular
-intervals (so-called checkpoints) in such a way that the code can be restarted with the most recent
-checkpoint after a critical failure. Since writing out data is expensive, help to optimize the use of
-checkpoints is valuable. A fault tolerant system would reliably provide an intended service even in the
-presence of critical failures
+						Many of today’s compute clusters are large systems consisting of hundreds to thousands
+						of compute nodes. Long-running parallel applications typically use parallel programming
+						libraries to move data between the nodes. Many of them are time sensitive real time applications
+						that are bounded to run within specified time frames. Since nodes may fail while a job is still active,
+						programs must be designed so that they are able to continue despite the faults/ failures. A fault tolerant system would reliably
+						provide an intended service even in the presence of critical failures. The most common
+						way involves saving interim data at regular intervals (so-called checkpoints) in such a way that
+						the code can be restarted with the most recent checkpoint after a critical failure. Since writing out data
+						is expensive, help to optimize the use of checkpoints is valuable.
 
-Simulators which are based on Weather , Petroleum Reserve Calculations, Verilog VHDL etc typically run for days. These are
-time sensitive, memory intensive applications. This criticality in time is what distinguishes the Real time systems from non- critical ones.
-While Our systems should be tolerant towards any faults, we should also have suitable mechanisms to recover from any potential
-hardware or software faults.
 
-LLVM is fast becoming the vehicle of choice for a wide variety of compiler research and development
-activities and is also increasingly being adopted by hardware vendors to provide compiler support for
-parallel programming interfaces. In this project, LLVM will be extended to support efficient checkpointing.
+						Simulators which are based on Weather , Petroleum Reserve Calculations, Verilog VHDL etc typically run for
+						days. These are generally time sensitive, memory intensive applications. This criticality in time is what
+						distinguishes these Real time systems from non- critical ones. While Our systems should be tolerant towards
+						any failures, they should also have suitable mechanisms to recover from any potential hardware or software faults.
 
- Learn the basics of fault tolerance, esp. for parallel applications written using MPI or OpenSHMEM
- Review the literature on compiler support for improving the efficiency of Checkpoint Restart (and/or
-for simplifying its use)
- Extend LLVM to analyze its use of data (especially arrays in loops) in order to decide what data
-objects need to be most frequently checkpointed
- Develop and implement in LLVM a strategy for deciding whether it is profitable to perform
-checkpointing or whether data structures should be recomputed
+						LLVM is fast becoming the vehicle of choice for a wide variety of compiler research and development activities
+						and is also increasingly being adopted by hardware vendors to provide compiler support for parallel programming
+						interfaces. In this project, LLVM is extended to support efficient checkpointing.
+
+
+						Objects to be checkpointed:
+
+						We have extended Extend LLVM to analyze its use of data in order to decide on what data objects need
+						to be most frequently checkpointed. We generated IR code and wrote a pass to decide on relevant checkpoint metrics.
+						In this pass, we have cached information on the variables at the start of every Basic Block. These are the variables
+						that are both symmetric and non-symmetric. At this point, we can't differentiate between this two because LLVM converts
+						both the allocations into Alloca Instrucrions. So we can't differentiate between Instruction that are Stack / Heap alocated.
+						Since the Basic Block entry contains all the relevant Alloca Instructions we iterated through it and cached it in VariableMetaInfo
+						for later use. The metainfo includes other information like isArray, reference to alloca instruction, size of array if it
+						is an array allocation. Additionally, we also maintain DEF-USE maps to a given alloca instruction. This comes handy in mapping
+						 a given ArgumentOperand to its Alloca variable. This information is crutial to identify which variables are being acted upon.
+
+						Identification of Call Instructions:
+
+						To identify the Call instructions, we have iterated on the Instructions of interest(i.e usually shmem_get and shmem_put call
+						instructions ). These instructions are cached into our custom DS for later use. Additionally, we maintain a map of
+						arguments and it's corresponding alloca instructions. We use this info to decide which variables are being updated.
+						Since these arrays can be quite large sometimes, we are also trying to find the stripe of the array segment that is
+						being updated. It helps to further narrow down our checkpointing memory footprint without having to store everything i nthe symmetric
+						memory of a PE. The idea to analyse the heat entropy of data exchange between PE's.
+
+
+						Strategy for Profitability:
+
+						To decide on the strategy for profitability we developed and implemented in LLVM a strategy for deciding whether
+						it is profitable to perform checkpointing.
 
 
 		*/
