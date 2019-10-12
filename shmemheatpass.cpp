@@ -1,5 +1,5 @@
 ﻿/*
- * CSE523
+ * CSE 523 / 524
  * SAMPATH KUMAR KILAPARTHI
  * 112079198
  *
@@ -24,17 +24,20 @@
 #include <map>
 #include <vector>
 #include <stack>
+#include "../LivenessAnalysis/LivenessAnalysis.cpp"
 
 
 using namespace llvm;
 using namespace std;
 
-namespace
-{
+
 	typedef  BasicBlock* bbt;
-	/* This a custom structur to preserve information that ius relevant to this pass*/
+	/* This a custom structur to preserve information that is relevant to this pass*/
+
+	const int DEFAULT = 5;
 
 	struct heatNode {
+
 		int ID;/* ID for future use*/
 		bbt bb; /* pointer to basic block*/
 		int profcount; /* count of profile analysis*/
@@ -44,6 +47,7 @@ namespace
 
 		/* constructor*/
 		heatNode(int id, bbt bb) : ID(id), bb(bb), profcount(0), freqcount(0), noofcallins(0), imp(false) {}
+	
 		/* setter*/
 		void setID(int ID) { this->ID = ID; }
 		/* getter*/
@@ -67,6 +71,7 @@ namespace
 		being used by the Basic Block of interest.
 	*/
 	struct VariableMetaInfo {
+	
 		/* pointer to alloca instruciton*/
 		AllocaInst *alloca;
 		/* Marks if the given alloca instrucion has static size allcoation parameter*/
@@ -85,48 +90,49 @@ namespace
 			alloca = ai;
 			is_static_alloca = false;
 			is_array_alloca = false;
-		};
-
+		}
 	};
 
 
 
 	struct CallMetaInfo {
+
 		/* pointer to Call instruction*/
 		CallInst *ci;
 		vector< vector<Instruction *>> vva;
 		CallMetaInfo(CallInst *cinst) {
 			ci = cinst;
 			vva.clear();
-		};
+		}
 
 	};
 
-	string ParseFunctionName(CallInst *call)
-	{
+	string ParseFunctionName(CallInst *call) {
 		auto *fptr = call->getCalledFunction();
 		if (!fptr) {
 			return "received null as fptr";
-		}
-		else {
+		} else {
 			return string(fptr->getName());
 		}
 	}
 
+	namespace {
 
-	class shmemheat : public  BlockFrequencyInfoWrapperPass
-	{
+	class shmemheat : public  BlockFrequencyInfoWrapperPass {
 	public:
 
 		/* Vector of all variable metainformation */
 		vector <VariableMetaInfo*> Variableinfos;
-
 		/* map of instruction and it's variable meta information*/
 		DenseMap < Instruction *, VariableMetaInfo* > Inst2VarInfo_map;
+
+		// call intruction and it's operands involved for alloca
 		vector < CallMetaInfo *>  callinstvec;
+		map < CallInst *, CallMetaInfo* > Callinst2AllocaMap;
 		map <string, int> functionMap;
 		map < bbt, heatNode *> heatmp;
 		map < int, heatNode *> heatIDmp;
+		map< string, int> functionToCodeMap;
 		static char ID;
 		int id = 1;
 		shmemheat() : BlockFrequencyInfoWrapperPass() {}
@@ -148,8 +154,7 @@ namespace
 			}
 			return present;
 		}
-		void peek_into_alloca_mappings(Value *v1)
-		{
+		void peek_into_alloca_mappings(Value *v1) {
 			errs() << "Print argument type: " << *(v1->getType()) << "\n";
 			v1->dump();
 			if (v1->getType()->isPointerTy()) {
@@ -159,19 +164,18 @@ namespace
 
 					Instruction *useinst;
 					if ((useinst = cast<LoadInst>(v1))) {
-						VariableMetaInfo *vinfo = Inst2VarInfo_map[useinst];
+						
 						//errs() << "\nPrinting the alloca: \t";
 						//errs() << vinfo->alloca->dump() << "\n";
 						if (Inst2VarInfo_map.find(useinst) != Inst2VarInfo_map.end()) {
+							VariableMetaInfo *vinfo = Inst2VarInfo_map[useinst];
 							errs() << "Found alloca mapped instruction\n";
-						}
-						else {
+						} else {
 							errs() << "Couldn't find it";
 						}
 
 					}
-				}
-				else if (isa<AllocaInst>(v1)) {
+				} else if (isa<AllocaInst>(v1)) {
 					errs() << "Alloca type\n";
 					//AllocaInst *allocinst;
 					int index = -1;
@@ -186,21 +190,18 @@ namespace
 
 								if (find_alloca_from_vec(allocinst, &index)) {
 									errs() << "Found alloca direct instruction\n";
-								}
-								else {
+								} else {
 									errs() << "Lookup failed\n";
 								}
 								break;
 							}
 						}
 					}
-				}
-				else if (isa<StoreInst>(v1))
-				{
+				} else if (isa<StoreInst>(v1)) {
+
 					errs() << "Found Store instruction\n";
-				}
-				else if (isa<GetElementPtrInst>(v1))
-				{
+
+				} else if (isa<GetElementPtrInst>(v1)) {
 					errs() << "Found GEPI instruction\n";
 					//AllocaInst *allocinst;
 					if (GetElementPtrInst *GEPI = cast<GetElementPtrInst>(v1)) {
@@ -211,12 +212,10 @@ namespace
 							errs() << "\t" << *(GEPI->getOperand(i)) << "\n";
 						}
 					}
-				}
-				else {
+				} else {
 					errs() << "Went to else case\n";
 				}
-			}
-			else {
+			} else {
 				errs() << "Not a pointer type argument\n";
 			}
 
@@ -239,8 +238,9 @@ namespace
 				ii = s.top(); s.pop();
 				for (Use &U : ii->operands()) {
 					Value *v = U.get();
+					errs() << "\n\t\t\t\t \"  starting on : " << *v << "\n";
 					if (dyn_cast<Instruction>(v)) {
-						//errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ii << "\"" << ";\n";
+						errs() << "\n\"  processing " << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ii << "\"" << ";\n";
 						//flag = true;
 						ii = dyn_cast<Instruction>(v);
 						s.push(ii);
@@ -252,8 +252,7 @@ namespace
 			}
 		}
 
-		void PrintFunctionArgs(CallInst *ci, CallMetaInfo *cmi)
-		{
+		void PrintFunctionArgs(CallInst *ci, CallMetaInfo *cmi) {
 			// gets function name from the call instruction
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
@@ -262,17 +261,17 @@ namespace
 
 			errs() << "Iterating over the operands on the call instruction\n";
 
-
 			for (Use &U : ci->operands()) {
 				vector <Instruction *> va;
 				va.clear();
 				Value *v = U.get();
+
 				if (dyn_cast<Instruction>(v)) {
 					//errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *ci << "\"" << ";\n";
 
 					get_allocainst_for_every_operand(dyn_cast<Instruction>(v), va);
 					for (int i = 0; i < va.size(); i++) {
-						errs() << *(va[i]) << "\n";
+						errs() <<  i << " 'th alloca map: " << *(va[i]) << "\n";
 					}
 					cmi->vva.push_back(va);
 				}
@@ -280,7 +279,6 @@ namespace
 
 
 			errs() << "Alloca instructions ended\n";
-
 
 
 			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
@@ -360,6 +358,7 @@ namespace
 		void getAnalysisUsage(AnalysisUsage &AU) const {
 			AU.addRequired<BranchProbabilityInfoWrapperPass>();
 			AU.addRequired<LoopInfoWrapperPass>();
+			AU.addRequired<LivenessAnalysisPass>();
 			AU.setPreservesAll();
 		}
 
@@ -381,8 +380,28 @@ namespace
 				errs() << "\nNo of call instructions " << tmp->getnoofcallins() << "\n";
 			}
 		}
-
-		virtual bool runOnBasicBlock(BasicBlock &BB) {
+		int GetFunctionID(string &cname) {
+			/*
+			shmem_init 1
+			shmem_put  2
+			shmem_get  3
+			default    4
+			*/
+			int value = DEFAULT;
+			if (cname.find("shmem_init") != std::string::npos) {
+				value = 1;
+			}
+			else if (cname.find("shmem") != std::string::npos && cname.find("put") != std::string::npos ) {
+				value = 2;
+			}
+			else if (cname.find("shmem") != std::string::npos && cname.find("get") != std::string::npos) {
+				value = 3;
+			} else {
+				value = DEFAULT;
+			}
+			return value;
+		}
+		virtual bool ProcessBasicBlock(BasicBlock &BB) {
 
 			for (BasicBlock::iterator bbs = BB.begin(), bbe = BB.end(); bbs != bbe; ++bbs) {
 
@@ -390,14 +409,24 @@ namespace
 				CallSite cs(ii);
 				if (!cs.getInstruction()) continue;
 				Value* called = cs.getCalledValue()->stripPointerCasts();
-				if (Function *fptr = dyn_cast<Function>(called))
-				{
+				if (Function *fptr = dyn_cast<Function>(called)) {
 					string cname = fptr->getName().str();
-					if (cname.find("shmem_init") != std::string::npos) {
+
+					// Add provision to look for different shmem functions
+								/*
+								shmem_init 1
+								shmem_put  2
+								shmem_get  3
+								default    4
+								*/
+					switch (GetFunctionID(cname)) {
+					case 1: {
 						errs() << ii->getOperand(0)->getName();
 						errs() << *ii;
+						break;
 					}
-					else if (cname.find("shmem") != std::string::npos && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+					case 2:
+					case 3: {
 						CallInst *ci = cast<CallInst>(ii);
 						//errs() << "\n\n\nFound  fxn call: " << *ii << "\n";
 						errs() << "Function call: " << fptr->getName() << "\n";
@@ -406,19 +435,41 @@ namespace
 						CallMetaInfo *cmi = new CallMetaInfo(ci);
 						PrintFunctionArgs(ci, cmi);
 						callinstvec.push_back(cmi);
+						Callinst2AllocaMap[ci] = cmi;
+						break;
+					}
+					default:
+						errs() << "Default case invoked: " << cname << "\n";
+						break;
+
 					}
 				}
 			}
 		}
 
-		void DisplayCallstatistics(Instruction *ins, uint64_t &count)
-		{
+
+		void DisplayAllocaforCallInstruction(CallInst *ci) {
+			if (Callinst2AllocaMap.find(ci) != Callinst2AllocaMap.end()) {
+				CallMetaInfo *cmi = Callinst2AllocaMap[ci];
+					//cmi->vva.push_back(va);   sampath
+
+				for (auto &va : cmi->vva) {
+					for (auto al : va) {
+					errs() << *al;
+					}
+				}
+			}
+
+		}
+		void DisplayCallstatistics(Instruction *ins, uint64_t &count) {
 			Instruction* ii = ins;
 			CallInst *ci = cast<CallInst>(ii);
 			string cname = dyn_cast<Function>(ci->getCalledValue()->stripPointerCasts())->getName().str();
 			errs() << "\t\tPrinting function name: " << cname << " occurs " << count << " times.\n";
 			// We check fucntions which contains get and put functions. We match the function string cname with selected patterns.
-			if (cname.find("put") != std::string::npos || cname.find("get") != std::string::npos) {
+
+			int functionID = GetFunctionID(cname);
+			if ( functionID >=2 && functionID <= 3 ) {
 
 				for (auto i = 0; i < ci->getNumArgOperands(); i++) {
 
@@ -426,8 +477,7 @@ namespace
 					if (ci->getArgOperand(i)->getType()->isPointerTy()) {
 
 						errs() << "\t\t" << ci->getArgOperand(i)->stripPointerCasts()->getName().str() << "\n";
-					}
-					else {
+					} else {
 						//errs() << ci->getArgOperand(i)->getName().str() << "\t";
 						//errs() << ci->getOperand(i);
 					}
@@ -446,13 +496,11 @@ namespace
 						errs() << "const integer type\n";
 						// foo indeed is a ConstantInt, we can use CI here
 						errs() << "Const value: " << cint->getSExtValue() << "\n";
-					}
-					else {
+					} else {
 						// foo was not actually a ConstantInt
 						errs() << "Not a const\n";
 					}
-				}
-				else {
+				} else {
 					// Different types. It must me an integert according to the put and get definitions
 					//errs() << "Different types\n";
 				}
@@ -460,11 +508,15 @@ namespace
 				ci->getArgOperand(3)->dump();
 				errs() << "\t\t************************************************************************ \n\n";
 			}
+
+
+			DisplayAllocaforCallInstruction(ci);
 		}
 
 		virtual bool isCallOfInterest(string &cname) {
 
-			return (cname.find("shmem") != std::string::npos  && cname.find("put") != std::string::npos || cname.find("get") != std::string::npos);
+			int value = GetFunctionID(cname);
+			return DEFAULT != value;
 
 		}
 
@@ -474,18 +526,15 @@ namespace
 
 		virtual bool isBlockOfInterest(BasicBlock &B, vector <Instruction *> &vec, vector <Instruction *> &callinst) {
 			bool interest = false;
-			for (auto &I : B)
-			{
+			for (auto &I : B) {
 				Instruction* ii = &I;
 				CallSite cs(ii);
 				if (!cs.getInstruction()) continue;
 
 				Value* called = cs.getCalledValue()->stripPointerCasts();
-				if (Function *fptr = dyn_cast<Function>(called))
-				{
+				if (Function *fptr = dyn_cast<Function>(called)) {
 					string cname = fptr->getName().str();
-					if (isShmemCall(cname))
-					{
+					if (isShmemCall(cname)) {
 						callinst.push_back(ii);
 					}
 					if (isCallOfInterest(cname)) {
@@ -527,22 +576,18 @@ namespace
 						Inst2VarInfo_map[useinst] = varinfo;
 						//errs() << "\nLoad dump:\n";
 						//useinst->dump();
-					}
-					else {
+					} else {
 						errs() << "Replacing an existing entry\n";
 					}
-				}
-				else if ((useinst = dyn_cast<StoreInst>(use))) {
+				} else if ((useinst = dyn_cast<StoreInst>(use))) {
 					//useinst->print(errs()); errs() << "\n";
 					if (useinst->getOperand(1) == varinfo->alloca) {
 						Inst2VarInfo_map[useinst] = varinfo;
 						varinfo->defblocks.insert(useinst->getParent());
-					}
-					else {
+					} else {
 						return false;
 					}
-				}
-				else {
+				} else {
 					errs() << "|||||||||||Looping out|||||||||||||||||||";
 					//useinst->print(errs()); errs() << "\n";
 					return false;
@@ -551,38 +596,26 @@ namespace
 			return true;
 		}
 
-		virtual bool runOnFunction(Function &Func)
-		{
-			errs().write_escaped(Func.getName());
-			errs() << "\n\n************************************************************************ \n\n";
+		void printEveryInstruction(Function &Func) {
 
-			errs() << "\nFunction Name: " << Func.getName();
-			vector<Instruction *> worklist;
-			/*for (auto block = Func.getBasicBlockList().begin(); block != Func.getBasicBlockList().end(); block++)
-			{
-				for (auto inst = block->begin(); inst != block->end(); inst++)
-				{
-					for (Use &U : inst->operands())
-					{
+			for (auto block = Func.getBasicBlockList().begin(); block != Func.getBasicBlockList().end(); block++) {
+				for (auto inst = block->begin(); inst != block->end(); inst++) {
+					for (Use &U : inst->operands()) {
 						Value *v = U.get();
-						if (dyn_cast<Instruction>(v))
-						{
+						if (dyn_cast<Instruction>(v)) {
 							errs() << "\n\"" << *dyn_cast<Instruction>(v) << "\n\t" << "\"" << " -> " << "\"" << *inst << "\"" << ";\n";
 						}
 					}
 					errs() << "used\n";
 				}
-			}*/
+			}
+		}
 
-			errs() << "\n\tFunction size " << Func.size();
-
-			//printResult();
-			// Get hold of allcoa instructions . These are present at the start of Function. So we use getEntryBlock()
+		void processAllocaInstructions(Function &Func) {
 
 			for (auto &insref : Func.getEntryBlock()) {
 				Instruction *I = &insref;
-				// We check if the given  instruction can be casted to a Alloca  instruction.
-
+				// We check if the given instruction can be casted to a Alloca instruction.
 				if (AllocaInst *alloca = dyn_cast_or_null<AllocaInst>(&insref)) {
 					//errs() << " \n Identified a alloca instruction : " << (I)->getNumOperands();
 
@@ -603,7 +636,7 @@ namespace
 					if (alloca->isStaticAlloca()) {
 						varinfo->is_static_alloca = true;
 					}
-					/* Tells if the allcoa is a pointer allocation*/
+					/* Tells if the alloca is a pointer allocation*/
 					if (alloca->getAllocatedType()->isPointerTy()) {
 						varinfo->isPointer = true;
 					}
@@ -638,22 +671,41 @@ namespace
 					if (Is_var_defed_and_used(varinfo)) {
 						// variableinfos
 						Variableinfos.push_back(varinfo);
-					}
-					else {
+					} else {
 						delete varinfo;
 					}
 				}
 			}
+		}
 
+		// maintains mapping between call instruction and it's operands alloca mappings
+		void ProcessAllBasicBlocks(Function &Func) {
+			for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its) {
+				ProcessBasicBlock(*Its);
+			}
+		}
+		virtual bool runOnFunction(Function &Func) {
 
+			errs().write_escaped(Func.getName());
+			errs() << "\n\n************************************************************************ \n\n";
+			errs() << "\nFunction Name: " << Func.getName();
+
+			vector<Instruction *> worklist;
+			/*
+			 * printEveryInstruction(Func);
+			 */
+			errs() << "\n\tFunction size " << Func.size();
+			//printResult();
+			/*
+			 * Get hold of alloca instructions. Since, these intructions are Alloca we can use getEntryBlock() to
+			 * iterate over the first few ones.
+			 */
+			processAllocaInstructions(Func);
 			// Run the alloca identification in every call instruction
 			errs() << "\n\n************************************************************************ \n\n";
 			errs() << "Run the alloca identification in every call instruction \n";
 
-			for (Function::iterator Its = Func.begin(), Ite = Func.end(); Its != Ite; ++Its)
-			{
-				runOnBasicBlock(*Its);
-			}
+			ProcessAllBasicBlocks(Func);
 
 			functionMap.clear();
 
@@ -675,13 +727,11 @@ namespace
 
 
 			// iterate through each block
-			for (auto &B : Func)
-			{
+			for (auto &B : Func) {
 				uint64_t BBprofCount = locBFI.getBlockProfileCount(&B).hasValue() ? locBFI.getBlockProfileCount(&B).getValue() : 0;
 				uint64_t BBfreqCount = locBFI.getBlockFreq(&B).getFrequency();
 				insv.clear();
-				if (isBlockOfInterest(B, insv, callinst))
-				{
+				if (isBlockOfInterest(B, insv, callinst)) {
 					heatNode *hnode = new heatNode(id, &B);
 					hnode->setfreqcount(BBfreqCount);
 					hnode->setprofcount(BBprofCount);
@@ -691,15 +741,13 @@ namespace
 					errs() << " Found " << callinst.size() << " shmem related call instructions\n";
 					errs() << " Display Call statistics: \n";
 					hnode->setnoofcallins(callinst.size());
-					for (auto ins : insv)
-					{
+					for (auto ins : insv) {
 						DisplayCallstatistics(ins, BBprofCount == 0 ? BBfreqCount : BBprofCount);
 					}
 					loop = LI.getLoopFor(&B);
 					if (loop == false) {
 						errs() << "Not an affine loop. Not of some interest\n";
-					}
-					else {
+					} else {
 						// handle cases here
 						errs() << "Affine loop found here\n";
 						//errs() << loop->getCanonicalInductionVariable()->getName() << "\n";
@@ -836,17 +884,65 @@ for (unsigned num = 0; num < I->getNumOperands(); ++num)
 						interfaces. In this project, LLVM is extended to support efficient checkpointing.
 
 
+
+						Openshmem Checker:
+
+						OpenSHMEM is a programming interface for computer clusters that enables
+						message passing, just like MPI. It contains library routines that enable remote
+						data to be fetched or written directly and so they do not interfere with
+						code running on the location storing the data object of interest, thereby leading to
+						higher performance. But openSHMEM compiler doesn't have the inbuilt support for symantical
+						checks that are related to synchronisation. As an example, while it syntactically to have
+						a get statement followed by a put, the results may not be consistent. This is because of
+						the overhead involved with a put request.
+						Additionally, it is convenient to identify potential points for checkpointing in the front End.
+						However, these might not be optimal. We should revert to IR optimizations to decide upon the strategy
+						to place these checkpointer placeholders.
+
+
+						Design:
+
+
+
+						Def Use Chains:
+
+						int z  ==>   %1 = alloca i32, align 4				==> Alloca Instruction
+						int y        %2 = alloca i32, align 4
+						z = 1		 store i32 1, i32* %1, align 4			==> Def Instruction
+						y = z+1      %5 = add nsw i32 %4, 1					==> Use Instruction
+									 store i32 %5, i32* %2, align 4
+
+						z = 4        store i32 4, i32* %1, align 4			==> Def Instruction
+
+						x = y+1      %6 = load i32, i32* %2, align 4		==> pseudo Use Instruction
+									 %7 = add nsw i32 %6, 1						We should account for this as well. This should be mapped to z
+									 store i32 %7, i32* %3, align 4
+
+						Array Instruction:
+
+									%6 = alloca [9 x i64], align 16
+
+						shmem_alloc pointer:
+
+									%19 = getelementptr inbounds [9 x i64], [9 x i64]* %6, i64 0, i64 %18
+
+
 						Objects to be checkpointed:
 
 						We have extended Extend LLVM to analyze its use of data in order to decide on what data objects need
 						to be most frequently checkpointed. We generated IR code and wrote a pass to decide on relevant checkpoint metrics.
-						In this pass, we have cached information on the variables at the start of every Basic Block. These are the variables
-						that are both symmetric and non-symmetric. At this point, we can't differentiate between this two because LLVM converts
-						both the allocations into Alloca Instrucrions. So we can't differentiate between Instruction that are Stack / Heap alocated.
-						Since the Basic Block entry contains all the relevant Alloca Instructions we iterated through it and cached it in VariableMetaInfo
-						for later use. The metainfo includes other information like isArray, reference to alloca instruction, size of array if it
-						is an array allocation. Additionally, we also maintain DEF-USE maps to a given alloca instruction. This comes handy in mapping
-						 a given ArgumentOperand to its Alloca variable. This information is crutial to identify which variables are being acted upon.
+						In this pass, we have cached information on the variables at the start of every Basic Block. These are the
+						variables that are both symmetric and non-symmetric. At this point, we can't differentiate between this two because LLVM
+						converts both the allocations into Alloca Instrucrions. So we can't differentiate between Instruction that are Stack / Heap
+						alocated. Since the Basic Block entry contains all the relevant Alloca Instructions we iterated through it and cached it
+						in VariableMetaInfo for later use. The metainfo includes other information like isArray, reference to alloca instruction, size of
+						array if it is an array allocation. Additionally, we also maintain DEF-USE maps to a given alloca instruction. This comes
+						handy in mapping a given ArgumentOperand to its Alloca variable. This information is crutial to identify which variables are
+						 being acted upon.
+
+
+							:VariableMetaInfo:
+									We cache meta info of variables into this structure.
 
 						Identification of Call Instructions:
 
@@ -862,6 +958,13 @@ for (unsigned num = 0; num < I->getNumOperands(); ++num)
 
 						To decide on the strategy for profitability we developed and implemented in LLVM a strategy for deciding whether
 						it is profitable to perform checkpointing.
+
+
+
+
+
+
+
 
 
 		*/
