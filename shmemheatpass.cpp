@@ -24,11 +24,132 @@
 #include <map>
 #include <vector>
 #include <stack>
-#include "../LivenessAnalysis/LivenessAnalysis.cpp"
+//#include "../LivenessAnalysis/LivenessAnalysis.cpp"
+#include "DFA.h"
+#include "llvm/Pass.h"
+#include "llvm/IR/Function.h"
+#include "llvm/Transforms/IPO/PassManagerBuilder.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/PassAnalysisSupport.h"
+
+#include <set>
+#include <unordered_set>
+#include <unordered_map>
+using namespace std;
+using namespace llvm;
+class LivenessInfo : public Info {
+public:
+
+	set<unsigned>info;
+	LivenessInfo() {}
+
+	LivenessInfo(LivenessInfo *&a) {
+		info = a->info;
+	}
+
+	LivenessInfo(const set<unsigned>&a) {
+		info = a;
+	}
+
+	void print() {
+		for (auto it : info) fprintf(stderr, "%d|", it);
+		fprintf(stderr, "\n");
+	}
+
+	static bool equals(LivenessInfo *a, LivenessInfo *b) {
+		return a->info == b->info;
+	}
+
+	static LivenessInfo *join(LivenessInfo *info1, LivenessInfo *info2, LivenessInfo *result) {
+		result->info.insert(info1->info.begin(), info1->info.end());
+		result->info.insert(info2->info.begin(), info2->info.end());
+		return result;
+	}
+	static void join(LivenessInfo *info1, LivenessInfo *result) {
+		result->info.insert(info1->info.begin(), info1->info.end());
+	}
+};
+
+unordered_set<string> opHasRet = { "alloca", "load", "select", "icmp", "fcmp", "getelementptr" };
+
+class LivenessAnalysis : public DataFlowAnalysis<LivenessInfo, false> {
+public:
+	LivenessAnalysis(LivenessInfo & bottom, LivenessInfo & initialState)
+		: DataFlowAnalysis(bottom, initialState) {}
+
+	void flowfunction(Instruction *					I,
+		std::vector<unsigned>&		IncomingEdges,
+		std::vector<unsigned>&		OutgoingEdges,
+		std::vector<LivenessInfo *> & Infos)
+	{
+		set<unsigned> operands;
+		unsigned insIdx = InstrToIndex[I];
+		int opCat = 0;
+		LivenessInfo *outInfo = new LivenessInfo();
+		for (int i = 0; i < (int)IncomingEdges.size(); i++)
+			LivenessInfo::join(EdgeToInfo[make_pair(IncomingEdges[i], insIdx)], outInfo);
+		for (int i = 0; i < (int)I->getNumOperands(); i++) {
+			Instruction *ins = (Instruction *)(I->getOperand(i));
+			// if (ins == NULL)
+			//     printf("null\n");
+			if (InstrToIndex.find(ins) != InstrToIndex.end())
+				operands.insert(InstrToIndex[ins]);
+		}
+		// fprintf(stderr, "I: %d\n", insIdx);
+		// for (auto x:operands)
+		//     fprintf(stderr, "%d ", x);
+		// fprintf(stderr, "\n");
+		Infos.clear();
+		if (I->isBinaryOp() || opHasRet.find(I->getOpcodeName()) != opHasRet.end())
+			opCat = 1;
+		else if (isa<PHINode>(I))
+			opCat = 3;
+		else
+			opCat = 2;
+		if (opCat == 1) {
+			LivenessInfo::join(new LivenessInfo(operands), outInfo);
+			outInfo->info.erase(insIdx);
+			for (int i = 0; i < (int)OutgoingEdges.size(); i++)
+				Infos.push_back(outInfo);
+		}
+		else if (opCat == 2) {
+			LivenessInfo::join(new LivenessInfo(operands), outInfo);
+			for (int i = 0; i < (int)OutgoingEdges.size(); i++)
+				Infos.push_back(outInfo);
+		}
+		else {
+			BasicBlock *blk = I->getParent();
+			set<unsigned> results;
+			for (auto i = blk->begin(); i != blk->end(); i++) {
+				Instruction *ins = dyn_cast<Instruction>(i);
+				if (isa<PHINode>(ins) && InstrToIndex.find(ins) != InstrToIndex.end())
+					outInfo->info.erase(InstrToIndex[ins]);
+			}
+			for (int i = 0; i < (int)OutgoingEdges.size(); i++)
+				Infos.push_back(new LivenessInfo(outInfo));
+			for (auto i = blk->begin(); i != blk->end(); i++) {
+				Instruction *ins = dyn_cast<Instruction>(i);
+				if (isa<PHINode>(ins)) {
+					PHINode *phi = (PHINode *)(ins);
+					for (int j = 0; j < (int)phi->getNumIncomingValues(); j++) {
+						Instruction *phiv = (Instruction *)(phi->getIncomingValue(j));
+						if (InstrToIndex.find(phiv) == InstrToIndex.end())
+							continue;
+						for (int k = 0; k < (int)OutgoingEdges.size(); k++)
+							if (phiv->getParent() == IndexToInstr[OutgoingEdges[k]]->getParent())
+								LivenessInfo::join(new LivenessInfo(set<unsigned>({ InstrToIndex[phiv] })), Infos[k]);
+					}
+				}
+			}
+		}
+	}
+};
 
 
+/*
 using namespace llvm;
 using namespace std;
+*/
 
 
 	typedef  BasicBlock* bbt;
@@ -118,7 +239,8 @@ using namespace std;
 
 	namespace {
 
-	class shmemheat : public  BlockFrequencyInfoWrapperPass {
+	//class shmemheat : public  BlockFrequencyInfoWrapperPass {
+		class shmemheat : public  FunctionPass {
 	public:
 
 		/* Vector of all variable metainformation */
@@ -135,7 +257,13 @@ using namespace std;
 		map< string, int> functionToCodeMap;
 		static char ID;
 		int id = 1;
-		shmemheat() : BlockFrequencyInfoWrapperPass() {}
+		//shmemheat() : BlockFrequencyInfoWrapperPass() {}
+		LivenessInfo bottom, initialState;
+		LivenessAnalysis *rda;
+
+		shmemheat() : FunctionPass(ID) {
+			rda = new LivenessAnalysis(bottom, initialState);
+		}
 		~shmemheat() {}
 
 		/*
@@ -356,9 +484,9 @@ using namespace std;
 		}
 
 		void getAnalysisUsage(AnalysisUsage &AU) const {
-			AU.addRequired<BranchProbabilityInfoWrapperPass>();
-			AU.addRequired<LoopInfoWrapperPass>();
-			AU.addRequired<LivenessAnalysisPass>();
+			//AU.addRequired<BranchProbabilityInfoWrapperPass>();
+			//AU.addRequired<LoopInfoWrapperPass>();
+			//AU.addRequired<LivenessAnalysisPass>();
 			AU.setPreservesAll();
 		}
 
@@ -690,6 +818,10 @@ using namespace std;
 			errs() << "\n\n************************************************************************ \n\n";
 			errs() << "\nFunction Name: " << Func.getName();
 
+			rda->runWorklistAlgorithm(&Func);
+			rda->print();
+
+
 			vector<Instruction *> worklist;
 			/*
 			 * printEveryInstruction(Func);
@@ -715,6 +847,11 @@ using namespace std;
 			vector <Instruction *> insv, callinst;
 			bool loop = false;
 
+			/*errs() << "Running LivenessAnalysis Info pass \n";
+			LivenessAnalysis *rda = getAnalysis<LivenessAnalysisPass>().getLivenessAnalysisInfo();
+			rda->print();
+			errs() << "Ending Livenessanalysis\n";
+
 			BranchProbabilityInfo &BPI = getAnalysis<BranchProbabilityInfoWrapperPass>().getBPI();
 			LoopInfo &LI = getAnalysis<LoopInfoWrapperPass>().getLoopInfo();
 			BlockFrequencyInfo &locBFI = getBFI();
@@ -724,12 +861,15 @@ using namespace std;
 			locBFI.print(llvm::dbgs());
 			dbgs() << "%%%%%%%%%%%%%%%%%%%%%\n";
 			BPI.print(llvm::dbgs());
-
+			*/
 
 			// iterate through each block
 			for (auto &B : Func) {
-				uint64_t BBprofCount = locBFI.getBlockProfileCount(&B).hasValue() ? locBFI.getBlockProfileCount(&B).getValue() : 0;
+				/*uint64_t BBprofCount = locBFI.getBlockProfileCount(&B).hasValue() ? locBFI.getBlockProfileCount(&B).getValue() : 0;
 				uint64_t BBfreqCount = locBFI.getBlockFreq(&B).getFrequency();
+				*/
+				uint64_t BBprofCount = 0;
+				uint64_t BBfreqCount = 0;
 				insv.clear();
 				if (isBlockOfInterest(B, insv, callinst)) {
 					heatNode *hnode = new heatNode(id, &B);
@@ -744,14 +884,14 @@ using namespace std;
 					for (auto ins : insv) {
 						DisplayCallstatistics(ins, BBprofCount == 0 ? BBfreqCount : BBprofCount);
 					}
-					loop = LI.getLoopFor(&B);
+					/*loop = LI.getLoopFor(&B);
 					if (loop == false) {
 						errs() << "Not an affine loop. Not of some interest\n";
 					} else {
 						// handle cases here
 						errs() << "Affine loop found here\n";
 						//errs() << loop->getCanonicalInductionVariable()->getName() << "\n";
-					}
+					}*/
 					heatmp[&B] = hnode;
 					heatIDmp[id] = hnode;
 					id++;
